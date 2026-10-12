@@ -1,0 +1,26 @@
+{
+  "name": "115work-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "vue": "3.5.43",
+    "vue-router": "4.5.1",
+    "pinia": "3.0.2",
+    "vuetify": "3.8.2",
+    "lucide-vue-next": "0.468.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "5.2.3",
+    "vite": "6.4.4",
+    "typescript": "5.8.3",
+    "vue-tsc": "2.2.10",
+    "@playwright/test": "1.64.0",
+    "@types/node": "22.15.3"
+  }
+}

@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools==75.8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "115work"
+version = "0.1.0"
+description = "Persistent, single-owner file processing for 115 and local storage"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.143.0",
+  "starlette==1.7.0",
+  "uvicorn==0.34.2",
+  "sqlalchemy==2.0.40",
+  "alembic==1.15.2",
+  "pydantic-settings==2.9.1",
+  "httpx==0.28.1",
+  "httpcore==1.0.9",
+  "python-multipart==0.0.32",
+  "filelock==3.20.3",
+  "cryptography==50.0.2",
+  "tzdata==2025.2",
+  "croniter==6.0.0",
+  "watchfiles==1.1.0",
+  "pypdf==6.20.0",
+  "qrcode==8.2",
+  "pillow==12.3.0",
+]
+
+[project.optional-dependencies]
+p115 = ["p115client @ git+https://github.com/ChenyangGao/p115client.git@856e4f8f09ce034534bd458f06d3dee4474a1698"]
+dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "ruff==0.11.8"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["app/adapters/proto"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

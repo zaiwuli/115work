@@ -1,0 +1,27 @@
+services:
+  115work:
+    image: ghcr.io/zaiwuli/115work:latest
+    ports:
+      - "127.0.0.1:5656:5656"
+    volumes:
+      - ./data:/data
+    environment:
+      WORK115_ADAPTER: disabled
+      WORK115_LOCAL_TRUSTED_PROXIES: '["172.30.115.1"]'
+    init: true
+    mem_limit: 1g
+    restart: unless-stopped
+    stop_grace_period: 90s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.115.0/24
+          gateway: 172.30.115.1
