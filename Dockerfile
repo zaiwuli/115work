@@ -1,16 +1,18 @@
-FROM node:22-bookworm-slim AS frontend
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS frontend
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
-FROM golang:1.26.4-bookworm AS extractor
+FROM --platform=$BUILDPLATFORM golang:1.26.4-bookworm AS extractor
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /build
 COPY third_party/xtractr/ ./third_party/xtractr/
 COPY extractor/ ./extractor/
 WORKDIR /build/extractor
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /build/115work-extract .
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /build/115work-extract .
 
 FROM python:3.12-slim-bookworm AS runtime
 WORKDIR /opt/115work
