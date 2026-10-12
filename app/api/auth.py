@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import secrets
 import time
-import ipaddress
 
 from fastapi import HTTPException, Request
 
@@ -26,19 +25,6 @@ def configured(request: Request) -> bool:
 
 def authenticate(request: Request):
     if request.app.state.config.local_no_auth:
-        host = request.url.hostname or ""
-        peer = request.client.host if request.client else ""
-        def loopback(value):
-            if value == "localhost":
-                return True
-            try:
-                return ipaddress.ip_address(value).is_loopback
-            except ValueError:
-                return False
-        if not loopback(host) or not (
-            loopback(peer) or peer in request.app.state.config.local_trusted_proxies
-        ):
-            raise HTTPException(403, detail="LOCAL_ACCESS_ONLY")
         origin = request.headers.get("origin")
         if (origin and origin != str(request.base_url).rstrip("/")) or request.headers.get(
             "sec-fetch-site"

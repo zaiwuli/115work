@@ -12,7 +12,6 @@ class Config(BaseSettings):
     local_root: Path | None = None
     api_token: SecretStr = SecretStr("")
     local_no_auth: bool = True
-    local_trusted_proxies: list[str] = []
     cookie: SecretStr = SecretStr("")
     adapter: str = "disabled"
     allowed_source_roots: list[Path] = []
