@@ -45,7 +45,7 @@ def delete_offline(session, identifier):
     task = session.get(Offline, identifier)
     if not task:
         raise ValueError("OFFLINE_TASK_NOT_FOUND")
-    if task.status in {"submitting", "submitted", "downloading", "unknown", "submission_unknown"}:
+    if task.status in {"submitting", "submission_unknown"}:
         raise ValueError("OFFLINE_OPERATION_PENDING")
     jobs = [job for job in session.scalars(select(Job))
             if job.payload.get("batch_id") == task.batch_id]

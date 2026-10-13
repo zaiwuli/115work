@@ -202,7 +202,7 @@ class OfflineService:
                     self.job_store.owned(session, job)
                 for item in tasks:
                     current = session.get(Offline, item.id)
-                    if current.status not in POLLABLE:
+                    if current is None or current.status not in POLLABLE:
                         continue
                     matches = [
                         remote for remote in statuses
