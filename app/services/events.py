@@ -13,6 +13,18 @@ def record(session, task_id: str, kind: str, stage: str, message: str, category:
     session.add(event)
     session.flush()
     if category:
+        if kind != "TEST":
+            prior = select(Outbox.id).join(Event, Outbox.event_id == Event.id).where(
+                Event.task_id == task_id, Event.stage == stage, Event.id != event.id,
+                Outbox.category == category,
+            )
+            terminal = {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}
+            if kind in terminal:
+                prior = prior.where(Event.kind == kind)
+            else:
+                prior = prior.where(Event.kind.not_in(terminal))
+            if session.scalar(prior.limit(1)):
+                return event
         enabled = session.get(Settings, "notification_" + category)
         if kind == "TEST" or enabled is None or enabled.value["value"]:
             session.add(Outbox(event_id=event.id, category=category))

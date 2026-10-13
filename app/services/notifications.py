@@ -7,6 +7,16 @@ from zoneinfo import ZoneInfo
 
 DEFAULT_TEMPLATE = "{{icon}} {{title}}\n{{separator}}\n⏱️ 时间：{{time}}\n📦 来源：{{source}}\n📄 任务：{{task}}"
 
+STAGE_TITLES = {
+    "cloud_prepare": "准备云解压", "cloud_inspect": "检查压缩包内容",
+    "cloud_output": "云端导出解压文件", "cloud_export_unknown": "云解压结果等待核对",
+    "cloud_progress": "云端解压中", "cloud_verify": "验证云解压产物",
+    "cloud_password": "等待压缩密码", "local_fallback": "等待确认本地解压",
+    "local_extract": "本地解压中", "output_cleanup": "清理解压产物",
+    "output_flatten": "同名文件夹提层", "registered": "文件登记",
+    "complete": "处理完成", "cache": "缓存压缩包",
+}
+
 
 def normalize_ms_url(raw):
     parsed = urlsplit(raw.strip())
@@ -34,7 +44,7 @@ def enabled(settings, event, category):
         return True
     if not settings.get("notification_enabled", True):
         return False
-    if category in {"offline", "cloud"}:
+    if category == "offline":
         return settings.get("notification_" + category, True)
     return settings.get("notification_" + category, True) and settings.get(
         "notification_" + notification_stage(event), True,
@@ -47,7 +57,10 @@ def ms_payload(settings, event, category, task_name):
               "SUBMITTED": "离线任务已提交", "SUCCESS": "离线任务完成",
               "POSTPROCESS_SUCCEEDED": "任务清理完成", "POSTPROCESS_FAILED": "任务清理失败"}
     titles["CLOUD_TAKEOVER"] = "云解压已接管"
-    title = titles.get(event.kind, event.message)
+    stage = getattr(event, "stage", "")
+    title = titles.get(event.kind, STAGE_TITLES.get(stage, "任务状态更新"))
+    if event.kind not in titles and event.message and not re.fullmatch(r"[A-Za-z0-9_ :.-]+", event.message):
+        title = event.message
     values = {
         "icon": {
             "DISCOVERED": "📦", "RUNNING": "⏱️", "SUCCEEDED": "✅",
@@ -60,6 +73,7 @@ def ms_payload(settings, event, category, task_name):
         "time": datetime.fromtimestamp(event.created_at, ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S"),
         "source": {"cloud": "115 云解压", "offline": "115 离线", "local": "本地处理"}.get(category, category),
         "task": task_name or event.message,
+        "stage": STAGE_TITLES.get(stage, "处理中"),
     }
     # One substitution pass; path-embedded passwords never enter notifications.
     values["task"] = re.sub(r"\{\{[^}]*\}\}", "{{***}}", values["task"])
