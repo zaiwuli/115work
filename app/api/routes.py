@@ -111,7 +111,7 @@ def system_status(request: Request):
     db = request.app.state.db
     with db.session() as session:
         tasks = list(session.scalars(select(Task).where(
-            Task.state.not_in(["SUCCEEDED", "CANCELED", "SKIPPED"]),
+            Task.state.not_in(["SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]),
         ).order_by(Task.created_at.desc()).limit(100)))
         history = list(session.scalars(select(Task).where(
             Task.state.in_(["SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]), ~Task.hidden,
@@ -121,6 +121,9 @@ def system_status(request: Request):
         total = session.scalar(select(func.count(Task.id)).where(Task.state == "SUCCEEDED"))
         approvals = session.scalar(select(func.count(Task.id)).where(Task.state == "WAITING_APPROVAL"))
         failures = session.scalar(select(func.count(Task.id)).where(Task.state == "FAILED"))
+        active = session.scalar(select(func.count(Task.id)).where(
+            Task.state.not_in(["SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]),
+        ))
     settings = db.settings()
     return {
         "version": "0.1.0", "adapter": request.app.state.config.adapter,
@@ -128,7 +131,7 @@ def system_status(request: Request):
         "local_formats": "ZIP / TAR / 7z / RAR / ISO" if extractor_available(request.app.state.config) else "ZIP / TAR",
         "extract_engine": request.app.state.config.extract_engine,
         "updated_at": time.time(), "paused": settings["paused"],
-        "totals": {"active": len(tasks), "finished": total, "retries": sum(t.attempts for t in tasks),
+        "totals": {"active": active, "finished": total, "retries": sum(t.attempts for t in tasks),
                    "workers": 1, "approvals": approvals, "failed": failures},
         "tasks": [serialize(x) for x in tasks], "history": [serialize(x) for x in history],
         "logs": [serialize(x) for x in events], "sources": [serialize(x) for x in sources],
@@ -147,7 +150,9 @@ def list_tasks(request: Request, state: str = "", source: str = "", q: str = "",
         query = select(Task).where(~Task.hidden)
         if terminal:
             query = query.where(Task.state.in_(["SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]))
-        if state:
+        if state == "ACTIVE":
+            query = query.where(Task.state.not_in(["SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]))
+        elif state:
             query = query.where(Task.state == state)
         if source:
             query = query.where(Task.source == source)
@@ -609,6 +614,40 @@ async def toggle_source(request: Request, source_id: str):
         for key, value in update.model_dump().items():
             setattr(source, key, value)
         source.revision += 1
+    return {"success": True}
+
+
+@secured.delete("/api/v1/sources/{source_id}")
+async def remove_source(request: Request, source_id: str):
+    with request.app.state.db.session() as session:
+        source = session.get(Source, source_id)
+        if not source:
+            raise HTTPException(404, detail="SOURCE_NOT_FOUND")
+        key = ("scan-cid:" + source.config["cid"] if source.kind == "115"
+               else "scan-source:" + source.id)
+        scans = list(session.scalars(select(Job).where(Job.kind.in_(
+            ["cloud_scan", "local_scan", "document"],
+        ))))
+        owned = [job for job in scans if job.key == key or job.payload.get("source_id") == source.id]
+        if any(job.state in {"RUNNING", "LEASED", "RECONCILING"} for job in owned):
+            raise HTTPException(409, detail="SOURCE_SCAN_BUSY")
+        for job in owned:
+            # Shared offline discovery must survive removal of the monitoring source.
+            if source.kind == "115" and session.scalar(select(Offline.id).where(
+                Offline.target_cid == source.config["cid"],
+                Offline.status.not_in(["failed", "submit_failed", "canceled"]),
+            )):
+                payload = dict(job.payload)
+                payload.pop("source_id", None)
+                job.payload = payload | {"offline_only": True}
+            else:
+                session.delete(job)
+        session.delete(source)
+    watcher = request.app.state.engine.watchers.pop(source_id, None)
+    if watcher:
+        watcher.cancel()
+        await asyncio.gather(watcher, return_exceptions=True)
+    request.app.state.engine.wake.set()
     return {"success": True}
 
 

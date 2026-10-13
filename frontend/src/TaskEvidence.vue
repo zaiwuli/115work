@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Check, Download, RotateCcw, Trash2 } from 'lucide-vue-next'
-import { api, bytes, date, stageLabel, stateLabel, textLabel } from './api'
+import { api, bytes, date, stageLabel, stateLabel, textLabel, statusTone } from './api'
 import { useSystem } from './store'
 const props = defineProps<{ task: any }>()
 const emit = defineEmits<{ updated: [] }>()
@@ -37,7 +37,7 @@ async function command(suffix: string, extra: any = {}) {
     <h3>执行步骤</h3>
     <div v-for="step in task.steps" :key="step.id" class="event-line">
       <div class="flex-content"><strong>{{ stageLabel(step.kind) }}</strong><small>{{ textLabel(step.error || date(step.updated_at)) }}</small></div>
-      <span class="state-tag">{{ stateLabel(step.state) }}</span>
+      <span class="state-tag" :class="statusTone(step.state)">{{ stateLabel(step.state) }}</span>
     </div>
   </section>
   <section v-if="task.output.verification || task.output.postprocess_result" class="task-evidence">

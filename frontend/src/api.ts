@@ -59,6 +59,9 @@ export function errorLabel(value: string) {
     FALLBACK_CAPABILITY_REQUIRED: '当前原包暂不能下载，请检查 115 连接和文件状态。',
     FAILED_ARCHIVE_RECONCILIATION_REQUIRED: '请先核对失败原包的归档结果。',
     SOURCE_UNAVAILABLE: '来源目录不可用，请检查路径或挂载状态。',
+    SOURCE_SCAN_BUSY: '该目录正在扫描或等待核对，请稍后删除来源。',
+    SOURCE_NOT_FOUND: '此来源已不存在，请刷新页面。',
+    PREVIEW_READ_ONLY: '模拟预览为只读，不执行真实操作。',
     REQUEST_FAILED: '请求未成功，请检查后台是否正常运行。',
     CLOUD_ROOT_REQUIRED: '请先在系统设置中初始化115云根目录。',
     CLOUD_CONFIGURATION_BUSY: '当前有任务执行，请稍后初始化云目录。',
@@ -88,6 +91,14 @@ export const stageNames: Record<string, string> = {
   discover_review: '文件发现待核对', join_review: '多个产物范围待核对',
 }
 export function stateLabel(value: string) { return stateNames[value] || (/^[a-z_]+$/i.test(value || '') ? '状态待核对' : value) }
+export function statusTone(state: string) {
+  if (['SUCCEEDED', 'success', 'sent', 'ARCHIVED'].includes(state)) return 'success'
+  if (['FAILED', 'failed', 'submit_failed'].includes(state)) return 'failure'
+  if (state.includes('APPROVAL') || state.includes('RETRY') || state.includes('unknown')
+    || ['RECONCILING', 'WAITING_RESOURCE'].includes(state)) return 'waiting'
+  if (['RUNNING', 'WAITING_EXTERNAL', 'downloading', 'submitted', 'submitting'].includes(state)) return 'running'
+  return 'neutral'
+}
 export function stageLabel(value: string) { return stageNames[value] || ({
   local_scan: '扫描本地目录', cloud_scan: '扫描云目录', offline_poll: '查询离线状态',
   notifications: '发送通知', cache_gc: '清理缓存', document: '解析文档', system: '系统操作',

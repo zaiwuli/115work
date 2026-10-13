@@ -1,21 +1,19 @@
 services:
-  115work:
+  unpackflow:
     build: .
-    ports:
-      - "${WORK115_PORT:-5656}:5656"
-    volumes:
-      - ./data:/data
-    environment:
-      WORK115_ADAPTER: disabled
-      WORK115_LOCAL_NO_AUTH: "true"
-    init: true
-    mem_limit: 1g
+    container_name: unpackflow
     restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      WORK115_DATA_DIR: /config
+      WORK115_LOCAL_ROOT: /data
+      WORK115_ALLOWED_SOURCE_ROOTS: '["/volume1/CloudNAS/CloudDrive"]'
+    volumes:
+      - /volume4/存储空间4/解压文件夹:/data
+      - /volume1/CloudNAS/CloudDrive:/volume1/CloudNAS/CloudDrive
+      - /volume1/docker/115work:/config
+    ports:
+      - "5656:5656"
+    init: true
     stop_grace_period: 90s
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    read_only: true
-    tmpfs:
-      - /tmp:rw,noexec,nosuid,size=128m
+networks: {}

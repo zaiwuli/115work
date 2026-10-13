@@ -4,11 +4,13 @@ import { useRoute } from 'vue-router'
 import { Plus, RefreshCw, X, Save, Play, Shield, Link, KeyRound, Search, Trash2, Archive, FileClock } from 'lucide-vue-next'
 import { api, date, stateLabel, textLabel } from './api'
 import { useSystem } from './store'
+import SettingsNav from './SettingsNav.vue'
+import RecentEvents from './RecentEvents.vue'
 const system = useSystem()
 const canWrite = computed(() => system.status?.role !== 'readonly')
 
 const route = useRoute()
-const view = computed(() => String(route.params.view))
+const view = computed(() => String(route.meta.view || route.params.view))
 const titles: Record<string, string> = { connections: '连接管理', rules: '处理规则', security: '安全管理', logs: '工作日志' }
 const items = ref<any[]>([])
 const sources = ref<any[]>([])
@@ -148,10 +150,15 @@ watch(view, () => { items.value = []; message.value = ''; void load() }, { immed
 
 <template>
   <section class="workspace">
-    <header class="page-heading"><div><div class="eyebrow">115work</div><h1>{{ titles[view] }}</h1></div>
+    <header class="page-heading"><div><div class="eyebrow">115work</div><h1>{{ view === 'connections' ? '系统设置' : titles[view] }}</h1></div>
       <div class="heading-actions"><v-btn v-if="canWrite && ['connections','rules','schedules'].includes(view)" color="primary" @click="open()"><Plus :size="17" class="mr-2" />添加</v-btn>
         <v-btn icon variant="text" aria-label="刷新页面" title="刷新页面" @click="load"><RefreshCw :size="18" /></v-btn></div>
     </header>
+    <SettingsNav v-if="view === 'connections'" />
+    <nav v-if="view === 'logs'" class="section-nav" aria-label="工作日志分页">
+      <RouterLink to="/logs" :class="{ active: route.query.section !== 'recent' }">工作详情</RouterLink>
+      <RouterLink to="/logs?section=recent" :class="{ active: route.query.section === 'recent' }">最近事件</RouterLink>
+    </nav>
     <p v-if="error" role="alert" class="error-text alert">{{ error }}</p>
     <p v-if="message" role="status" class="success-text alert">{{ message }}</p>
     <v-progress-linear v-if="busy" indeterminate color="primary" height="2" />
@@ -173,7 +180,7 @@ watch(view, () => { items.value = []; message.value = ''; void load() }, { immed
 
     <template v-else-if="view === 'rules'">
       <div class="table-wrap"><table><thead><tr><th>规则</th><th>来源</th><th>匹配</th><th>流程</th><th>原包策略</th><th>操作</th></tr></thead><tbody>
-        <tr v-for="item in items" :key="item.id"><td><strong>{{ item.name }}</strong><small>版本 {{ item.revision }}</small></td><td>{{ sources.find(x => x.id === item.source_id)?.name || '所有来源' }}</td><td>{{ item.config.pattern || '*' }}</td><td>{{ stateLabel(item.config.workflow || 'auto') }}</td><td>{{ stateLabel(item.config.original_action || 'retain') }}</td>
+        <tr v-for="item in items" :key="item.id"><td><strong>{{ item.name }}</strong><small>版本 {{ item.revision }}</small></td><td>{{ item.source_id ? sources.find(x => x.id === item.source_id)?.name || '已删除来源' : '所有来源' }}</td><td>{{ item.config.pattern || '*' }}</td><td>{{ stateLabel(item.config.workflow || 'auto') }}</td><td>{{ stateLabel(item.config.original_action || 'retain') }}</td>
           <td><div v-if="canWrite" class="row-actions"><button class="file-link" aria-label="编辑规则" title="编辑规则" @click="open(item)"><Save :size="17" /></button><button aria-label="删除规则" title="删除规则" @click="deletingRule = item"><Trash2 :size="17" /></button></div></td></tr>
       </tbody></table><div v-if="!items.length" class="empty"><Archive :size="32" /><span>暂无规则</span></div></div>
       <section v-if="canWrite" class="settings-section"><h2>规则预览</h2><div class="form-grid"><v-text-field v-model="previewName" label="文件名" /><v-btn variant="outlined" :disabled="!previewName" @click="command('/api/v1/rules/preview', { name: previewName, size: 0, source_id: sourceId }).then(x => preview = x)"><Search :size="17" class="mr-2" />预览</v-btn></div><p v-if="preview" class="mono mt-4">{{ stateLabel(preview.policy.workflow || 'auto') }}</p></section>
@@ -194,6 +201,7 @@ watch(view, () => { items.value = []; message.value = ''; void load() }, { immed
       <section class="settings-section"><h2>管理员密码</h2><div class="form-grid"><v-text-field v-model="newPassword" type="password" label="新密码" autocomplete="new-password" /><v-btn variant="outlined" :disabled="newPassword.length < 12" @click="command('/api/v1/security/password', { password: newPassword }).then(x => x && reload())"><Save :size="17" class="mr-2" />更新密码</v-btn></div></section>
     </template>
 
+    <RecentEvents v-else-if="view === 'logs' && route.query.section === 'recent'" />
     <template v-else>
       <div class="table-wrap"><table><thead><tr><th>时间</th><th>事件 / 操作</th><th>阶段 / 对象</th><th>详情</th></tr></thead><tbody>
         <tr v-for="item in items" :key="item.id"><td>{{ date(item.created_at) }}</td><td>{{ textLabel(item.kind || item.action) }}</td><td>{{ textLabel(item.stage || item.target) }}</td><td class="path-cell"><div>{{ textLabel(item.message || '') }}</div><details v-if="item.details && Object.keys(item.details).length"><summary>工作详情</summary><dl><template v-for="(value, key) in item.details" :key="key"><dt>{{ key }}</dt><dd class="path-cell">{{ typeof value === 'object' ? JSON.stringify(value, null, 2) : (String(key) === '当前状态' ? textLabel(String(value)) : String(value)) }}</dd></template></dl></details></td></tr>

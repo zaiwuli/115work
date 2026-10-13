@@ -19,7 +19,12 @@ import AdminViews from './AdminViews.vue'
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/:view(connections|rules|security|logs)', component: AdminViews },
+    { path: '/', redirect: '/tasks' },
+    { path: '/overview', redirect: '/tasks' },
+    { path: '/documents', redirect: '/offline' },
+    { path: '/connections', redirect: '/settings/connections' },
+    { path: '/settings/connections', component: AdminViews, meta: { view: 'connections' } },
+    { path: '/:view(rules|security|logs)', component: AdminViews },
     { path: '/schedules', redirect: '/settings' },
     { path: '/audit', redirect: '/logs' },
     { path: '/:view?', component: Workspace },
@@ -36,12 +41,8 @@ const vuetify = createVuetify({
   directives: { Ripple },
   theme: { defaultTheme: 'light', themes: {
     light: { colors: {
-      primary: '#23766a', secondary: '#52616b', background: '#f5f7f8',
+      primary: '#397fbd', secondary: '#52616b', background: '#f5f7f8',
       surface: '#ffffff', error: '#be3543', success: '#21845a', warning: '#ad6a08',
-    } },
-    dark: { dark: true, colors: {
-      primary: '#61baa3', secondary: '#a8b3bb', background: '#1e2326',
-      surface: '#282f33', error: '#e98390', success: '#69bb8c', warning: '#e6bb61',
     } },
   } },
   defaults: {

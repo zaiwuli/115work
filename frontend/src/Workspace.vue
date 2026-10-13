@@ -6,13 +6,18 @@ import {
   Plus, RefreshCw, Search, ArrowUpRight, Trash2, RotateCcw, X, Save, FolderOpen,
   ShieldCheck, ChevronLeft, ChevronRight, Eye, Send, ListFilter, Settings,
 } from 'lucide-vue-next'
-import { api, bytes, date, stageLabel, stateLabel, textLabel, errorLabel, uploadDocument } from './api'
+import { api, bytes, date, stageLabel, stateLabel, textLabel, errorLabel, uploadDocument, statusTone as tone } from './api'
 import TaskEvidence from './TaskEvidence.vue'
+import SettingsNav from './SettingsNav.vue'
+import SystemHealth from './SystemHealth.vue'
 import { useSystem } from './store'
 
 const route = useRoute()
 const system = useSystem()
-const view = computed(() => String(route.params.view || 'overview'))
+const view = computed(() => String(route.params.view || 'tasks'))
+const settingsSection = computed(() => String(route.query.section || 'cloud'))
+const offlineMode = computed(() => view.value === 'tasks' && route.query.type === 'offline')
+const offlineBatches = ref<any[]>([])
 const canWrite = computed(() => system.status?.role !== 'readonly')
 let liveRefresh: ReturnType<typeof setTimeout> | undefined
 watch(() => system.status?.updated_at, () => {
@@ -63,29 +68,44 @@ const diagnosis = ref<any>(null)
 const confirmation = ref<{ title: string, endpoint: string, body?: unknown, method?: string } | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
-const statistics = computed(() => [
-  { label: '进行中', value: system.status?.totals.active || 0, icon: Activity, color: 'teal' },
-  { label: '等待批准', value: system.status?.totals.approvals || 0, icon: Clock3, color: 'amber' },
-  { label: '处理失败', value: system.status?.totals.failed || 0, icon: CircleAlert, color: 'red' },
-  { label: '已完成', value: system.status?.totals.finished || 0, icon: CheckCircle2, color: 'green' },
+const statistics = computed(() => offlineMode.value ? [
+  { label: '进行中', state: 'ACTIVE', value: allOfflineItems.value.filter(x => !['success','failed','submit_failed','canceled'].includes(x.status)).length, icon: Activity, color: 'teal' },
+  { label: '等待提交', state: 'queued', value: allOfflineItems.value.filter(x => x.status === 'queued').length, icon: Clock3, color: 'amber' },
+  { label: '离线失败', state: 'FAILURES', value: allOfflineItems.value.filter(x => ['failed','submit_failed'].includes(x.status)).length, icon: CircleAlert, color: 'red' },
+  { label: '离线成功', state: 'success', value: allOfflineItems.value.filter(x => x.status === 'success').length, icon: CheckCircle2, color: 'green' },
+] : [
+  { label: '进行中', state: 'ACTIVE', value: system.status?.totals.active || 0, icon: Activity, color: 'teal' },
+  { label: '等待批准', state: 'WAITING_APPROVAL', value: system.status?.totals.approvals || 0, icon: Clock3, color: 'amber' },
+  { label: '处理失败', state: 'FAILED', value: system.status?.totals.failed || 0, icon: CircleAlert, color: 'red' },
+  { label: '已完成', state: 'SUCCEEDED', value: system.status?.totals.finished || 0, icon: CheckCircle2, color: 'green' },
 ])
-const offlineItems = computed(() => rows.value.flatMap(batch =>
+const allOfflineItems = computed(() => Array.from(new Map(offlineBatches.value.flatMap(batch =>
   batch.tasks.map((task: any) => ({ ...task, import_date: batch.target_date, import_cid: batch.target_cid })),
+).map((task: any) => [task.id, task])).values()) as any[])
+const offlineItems = computed(() => allOfflineItems.value.filter(task =>
+  (!search.value || task.name.toLowerCase().includes(search.value.toLowerCase())) &&
+  (!stateFilter.value || (stateFilter.value === 'ACTIVE'
+    ? !['success','failed','submit_failed','canceled'].includes(task.status)
+    : stateFilter.value === 'FAILURES' ? ['failed','submit_failed'].includes(task.status)
+    : task.status === stateFilter.value)),
 ))
+const offlineStateOptions = [
+  { title: '全部状态', value: '' }, { title: '进行中', value: 'ACTIVE' },
+  { title: '等待提交', value: 'queued' }, { title: '提交中', value: 'submitting' },
+  { title: '已提交', value: 'submitted' }, { title: '下载中', value: 'downloading' },
+  { title: '离线成功', value: 'success' }, { title: '离线失败 / 提交失败', value: 'FAILURES' },
+  { title: '待核对', value: 'unknown' }, { title: '提交结果待核对', value: 'submission_unknown' },
+  { title: '已取消', value: 'canceled' },
+]
 const progressTasks = computed(() => (system.status?.tasks || []).slice(0, 8))
 const stateOptions = [
   { title: '全部状态', value: '' }, { title: '等待处理', value: 'READY' },
+  { title: '进行中（所有未结束任务）', value: 'ACTIVE' },
   { title: '处理中', value: 'RUNNING' }, { title: '等待远端', value: 'WAITING_EXTERNAL' },
   { title: '等待批准', value: 'WAITING_APPROVAL' }, { title: '等待重试', value: 'WAITING_RETRY' },
   { title: '完成', value: 'SUCCEEDED' }, { title: '失败', value: 'FAILED' },
   { title: '待核对', value: 'RECONCILING' },
 ]
-function tone(state: string) {
-  if (['SUCCEEDED', 'success', 'sent', 'ARCHIVED'].includes(state)) return 'success'
-  if (['FAILED', 'failed', 'submit_failed'].includes(state)) return 'failure'
-  if (state.includes('APPROVAL') || state.includes('RETRY') || state.includes('unknown')) return 'waiting'
-  return 'neutral'
-}
 async function load() {
   loading.value = true
   error.value = ''
@@ -93,6 +113,8 @@ async function load() {
     if (view.value === 'overview') { await system.refresh(); return }
     if (view.value === 'settings') { settings.value = await api('/api/v1/settings'); return }
     if (view.value === 'maintenance') return
+    if (offlineMode.value) { offlineBatches.value = (await api('/api/v1/offline')).batches; return }
+    if (view.value === 'offline') return
     if (view.value === 'tasks' || view.value === 'history') {
       const result = await api(`/api/v1/tasks?page=${page.value}&page_size=30&terminal=${view.value === 'history'}&state=${encodeURIComponent(stateFilter.value)}&q=${encodeURIComponent(search.value)}`)
       rows.value = result.items
@@ -199,8 +221,9 @@ async function confirm() {
     await load()
   } catch (cause) { error.value = (cause as Error).message }
 }
-watch(view, () => { rows.value = []; page.value = 1; message.value = ''; void load() }, { immediate: true })
-watch([page, stateFilter], () => void load())
+watch([view, offlineMode], () => { rows.value = []; offlineBatches.value = []; stateFilter.value = ''; search.value = ''; page.value = 1; message.value = ''; void load() }, { immediate: true })
+watch(page, () => void load())
+watch(stateFilter, () => { if (page.value !== 1) page.value = 1; else void load() })
 watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { page.value = 1; void load() }, 250) })
 </script>
 
@@ -210,50 +233,33 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       <div><div class="eyebrow">115work</div><h1>{{ titles[view] || '运行总览' }}</h1></div>
       <div class="heading-actions">
         <v-btn v-if="view === 'sources' && canWrite" color="primary" @click="openSource()"><Plus :size="17" class="mr-2" />添加来源</v-btn>
-        <v-btn v-if="view === 'offline'" variant="outlined" :disabled="loading" @click="action('/api/115/offline/refresh')"><RefreshCw :size="16" class="mr-2" />查询离线</v-btn>
-        <v-btn v-if="canWrite && (view === 'overview' || view === 'sources' || view === 'jobs')" variant="outlined" :disabled="loading" @click="action('/api/v1/system/refresh')"><RefreshCw :size="16" class="mr-2" />扫描来源</v-btn>
+        <v-btn v-if="offlineMode" variant="outlined" :disabled="loading" @click="action('/api/115/offline/refresh')"><RefreshCw :size="16" class="mr-2" />查询离线</v-btn>
+        <v-btn v-if="canWrite && view === 'tasks'" variant="outlined" :disabled="loading" @click="action('/api/v1/system/refresh')"><RefreshCw :size="16" class="mr-2" />手动扫描</v-btn>
+        <v-btn v-if="canWrite && view === 'tasks'" variant="outlined" :disabled="loading" @click="action('/api/v1/cloud/monitor/check', {}, '已加入生活事件检查队列')"><Activity :size="16" class="mr-2" />检查生活事件</v-btn>
         <v-btn icon variant="text" title="刷新页面" aria-label="刷新页面" @click="load"><RefreshCw :size="18" /></v-btn>
       </div>
     </header>
     <p v-if="error" class="error-text alert" role="alert">{{ error }}</p>
     <p v-if="message" class="success-text alert" role="status">{{ message }}</p>
     <v-progress-linear v-if="loading" indeterminate color="primary" height="2" />
+    <nav v-if="view === 'tasks'" class="section-nav" aria-label="任务类型">
+      <RouterLink to="/tasks" :class="{ active: !offlineMode }">解压任务</RouterLink>
+      <RouterLink to="/tasks?type=offline" :class="{ active: offlineMode }">离线任务</RouterLink>
+    </nav>
 
-    <template v-if="view === 'overview'">
+    <section v-if="view === 'tasks'" aria-label="运行总览">
+      <header class="section-heading"><h2>运行总览</h2></header>
       <div class="stat-grid">
-        <article v-for="stat in statistics" :key="stat.label" class="stat-item">
+        <button v-for="stat in statistics" :key="stat.label" class="stat-item"
+          :class="{ selected: stateFilter === stat.state }" :aria-pressed="stateFilter === stat.state"
+          :aria-label="'查看' + stat.label + '任务'" @click="search = ''; stateFilter = stat.state">
           <div><span>{{ stat.label }}</span><strong>{{ stat.value }}</strong></div>
           <component :is="stat.icon" :size="26" :class="stat.color" />
-        </article>
+        </button>
       </div>
-      <div class="overview-columns">
-        <section class="data-section">
-          <header class="section-heading"><h2>当前任务</h2><RouterLink to="/tasks">全部任务<ArrowUpRight :size="15" /></RouterLink></header>
-          <div v-if="!progressTasks.length" class="empty"><FileArchive :size="36" /><span>暂无进行中的任务</span></div>
-          <button v-for="task in progressTasks" :key="task.id" class="task-line" @click="showTask(task)">
-            <FileArchive :size="22" class="muted" /><div class="flex-content"><strong>{{ task.name }}</strong><small>{{ stateLabel(task.source) }} · {{ stageLabel(task.stage) }}</small></div>
-            <span class="state-tag" :class="tone(task.state)">{{ stateLabel(task.state) }}</span>
-          </button>
-        </section>
-        <section class="data-section">
-          <header class="section-heading"><h2>运行状态</h2><ShieldCheck :size="18" class="green" /></header>
-          <dl class="health-list">
-            <div><dt>调度状态</dt><dd>{{ system.status?.paused ? '已暂停' : '运行中' }}</dd></div>
-            <div><dt>115 连接</dt><dd>{{ system.status?.adapter === 'disabled' ? '未配置' : system.status?.adapter === 'fake' ? '测试模式' : '已配置 / 待联调' }}</dd></div>
-            <div><dt>来源目录</dt><dd>{{ system.status?.sources.length || 0 }} 个</dd></div>
-            <div><dt>本地执行器</dt><dd>{{ system.status?.local_formats || '-' }}</dd></div>
-            <div><dt>原包策略</dt><dd>保留</dd></div>
-          </dl>
-        </section>
-      </div>
-      <section class="data-section mt-6">
-        <header class="section-heading"><h2>最近事件</h2><Activity :size="18" class="muted" /></header>
-        <div v-if="!system.status?.logs.length" class="empty small">暂无事件记录</div>
-        <div v-for="event in system.status?.logs" :key="event.id" class="event-line"><span class="event-dot" /><div class="flex-content"><strong>{{ stageLabel(event.stage) }}</strong><small>{{ textLabel(event.message) }}</small></div><time>{{ date(event.created_at) }}</time></div>
-      </section>
-    </template>
+    </section>
 
-    <template v-else-if="view === 'tasks' || view === 'history'">
+    <template v-if="(view === 'tasks' && !offlineMode) || view === 'history'">
       <div class="filter-bar"><Search :size="18" class="muted" /><v-text-field v-model="search" label="搜索文件名" class="search-field" /><v-select v-model="stateFilter" :items="stateOptions" label="状态" class="filter-select" /></div>
       <div class="table-wrap">
         <table><thead><tr><th>文件 / 来源</th><th>当前阶段</th><th>状态</th><th>大小</th><th>尝试</th><th>操作</th></tr></thead><tbody>
@@ -288,6 +294,13 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
           <v-spacer /><v-btn color="primary" :disabled="(!linkText.trim() && !upload) || loading" @click="importLinks"><Download :size="17" class="mr-2" />导入链接</v-btn>
         </div>
       </section>
+      <section class="settings-section">
+        <h2>从文件导入链接</h2>
+        <div class="import-actions"><label class="file-upload"><FileInput :size="17" />{{ documentUpload?.name || '选择文件' }}<input type="file" accept=".txt,.md,.csv,.json,.pdf,.docx" @change="documentUpload = ($event.target as HTMLInputElement).files?.[0] || null" /></label><v-btn :disabled="!documentUpload || loading" color="primary" @click="sendDocument"><FileInput :size="17" class="mr-2" />导入文件</v-btn><RouterLink to="/tasks?type=offline">查看离线任务</RouterLink></div>
+      </section>
+    </template>
+    <template v-else-if="offlineMode">
+      <div class="filter-bar"><Search :size="18" class="muted" /><v-text-field v-model="search" label="搜索文件名" class="search-field" /><v-select v-model="stateFilter" :items="offlineStateOptions" label="状态" class="filter-select" /></div>
       <header class="section-heading"><h2>离线记录</h2><v-btn variant="text" :disabled="loading" @click="confirmation = { title: '重试全部明确失败的离线任务？', endpoint: '/api/115/offline/retry-all', body: {} }"><RotateCcw :size="16" class="mr-2" />重试失败项</v-btn></header>
       <div class="table-wrap"><table><thead><tr><th>文件</th><th>日期 / 实际 CID</th><th>离线状态</th><th>处理阶段</th><th>操作</th></tr></thead><tbody>
         <tr v-for="task in offlineItems" :key="task.id + task.import_date">
@@ -302,7 +315,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
 
     <template v-else-if="view === 'sources'">
       <div class="table-wrap"><table><thead><tr><th>来源</th><th>类型</th><th>目录</th><th>扫描间隔</th><th>启用</th><th>操作</th></tr></thead><tbody>
-        <tr v-for="source in rows" :key="source.id"><td><strong>{{ textLabel(source.name) }}</strong><small>版本 {{ source.revision }}</small></td><td>{{ stateLabel(source.kind) }}</td><td class="path-cell">{{ source.config.path || source.config.virtual_path || ('CID ' + source.config.cid) }}</td><td>{{ source.interval ? source.interval + ' 秒' : '手动' }}<small>{{ date(source.next_run) }}</small></td><td><v-switch :model-value="source.enabled" :disabled="!canWrite" hide-details color="primary" density="compact" :aria-label="'启用' + source.name" @update:model-value="toggleSource(source, !!$event)" /></td><td><button v-if="canWrite" title="编辑来源" aria-label="编辑来源" @click="openSource(source)"><Settings :size="17" /></button></td></tr>
+        <tr v-for="source in rows" :key="source.id"><td><strong>{{ textLabel(source.name) }}</strong><small>版本 {{ source.revision }}</small></td><td>{{ stateLabel(source.kind) }}</td><td class="path-cell">{{ source.config.path || source.config.virtual_path || ('CID ' + source.config.cid) }}</td><td>{{ source.kind === '115' ? '生活事件 / 手动' : source.interval ? source.interval + ' 秒' : '手动' }}<small v-if="source.kind !== '115'">{{ date(source.next_run) }}</small></td><td><v-switch :model-value="source.enabled" :disabled="!canWrite" hide-details color="primary" density="compact" :aria-label="'启用' + source.name" @update:model-value="toggleSource(source, !!$event)" /></td><td><div v-if="canWrite" class="row-actions"><button title="编辑来源" aria-label="编辑来源" @click="openSource(source)"><Settings :size="17" /></button><button title="删除来源" aria-label="删除来源" @click="confirmation = { title: '删除此来源？停止监测该目录，保留已有任务、处理规则及所有真实文件。', endpoint: '/api/v1/sources/' + source.id, method: 'DELETE' }"><Trash2 :size="17" /></button></div></td></tr>
       </tbody></table><div v-if="!rows.length" class="empty"><FolderOpen :size="32" /><span>暂无来源</span></div></div>
     </template>
 
@@ -322,10 +335,12 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     </template>
 
     <template v-else-if="view === 'settings'">
-      <section class="settings-section"><h2>115 云根目录</h2><div class="form-grid"><v-text-field v-model="settings.cloud_root_cid" label="根目录 CID" /><v-btn :disabled="loading || !settings.cloud_root_cid" color="primary" @click="action('/api/v1/cloud/root', { cid: settings.cloud_root_cid }, '云目录已初始化')"><FolderOpen :size="17" class="mr-2" />初始化目录</v-btn></div><div class="form-grid"><v-text-field :model-value="settings.offline_root_cid" label="离线目录 CID" readonly /><v-text-field :model-value="settings.cloud_output_cid" label="解压目录 CID" readonly /><v-text-field :model-value="settings.cloud_archive_cid" label="归档目录 CID" readonly /><v-text-field :model-value="settings.cloud_failed_cid" label="失败目录 CID" readonly /></div><v-switch v-model="settings.cloud_extract_by_date" label="云解压输出按日期建目录" color="primary" hide-details /></section>
-      <section class="settings-section"><h2>云目录监测</h2><div class="import-actions"><v-switch v-model="settings.life_monitor_enabled" label="启用生活事件监测（每30分钟）" color="primary" hide-details /><v-btn variant="outlined" to="/sources"><FolderOpen :size="17" class="mr-2" />监测目录管理</v-btn><v-btn variant="outlined" :disabled="loading || !settings.life_monitor_enabled" @click="action('/api/v1/cloud/monitor/check', {}, '已加入生活事件检查队列')"><RefreshCw :size="17" class="mr-2" />立即检查</v-btn></div></section>
-      <section class="settings-section"><h2>调度节奏</h2><div class="form-grid"><v-text-field v-model.number="settings.cloud_retry_seconds" type="number" min="15" label="云解压重试间隔 / 秒" /><v-text-field v-model.number="settings.cloud_cooldown_seconds" type="number" min="15" label="成功冷却 / 秒" /><v-text-field v-model.number="settings.offline_fallback_seconds" type="number" min="15" label="离线兜底查询 / 秒" /></div></section>
-      <section class="settings-section"><h2>通知</h2>
+      <SettingsNav />
+      <SystemHealth v-if="settingsSection === 'status'" />
+      <section v-if="settingsSection === 'cloud'" class="settings-section"><h2>115 云根目录</h2><div class="form-grid"><v-text-field v-model="settings.cloud_root_cid" label="根目录 CID" /><v-btn :disabled="loading || !settings.cloud_root_cid" color="primary" @click="action('/api/v1/cloud/root', { cid: settings.cloud_root_cid }, '云目录已初始化')"><FolderOpen :size="17" class="mr-2" />初始化目录</v-btn></div><div class="form-grid"><v-text-field :model-value="settings.offline_root_cid" label="离线目录 CID" readonly /><v-text-field :model-value="settings.cloud_output_cid" label="解压目录 CID" readonly /><v-text-field :model-value="settings.cloud_archive_cid" label="归档目录 CID" readonly /><v-text-field :model-value="settings.cloud_failed_cid" label="失败目录 CID" readonly /></div><v-switch v-model="settings.cloud_extract_by_date" label="云解压输出按日期建目录" color="primary" hide-details /></section>
+      <section v-if="settingsSection === 'cloud'" class="settings-section"><h2>云目录监测</h2><div class="import-actions"><v-switch v-model="settings.life_monitor_enabled" label="启用生活事件监测（每30分钟）" color="primary" hide-details /><v-btn variant="outlined" to="/sources"><FolderOpen :size="17" class="mr-2" />监测目录管理</v-btn></div></section>
+      <section v-if="settingsSection === 'scheduler'" class="settings-section"><h2>调度节奏</h2><div class="form-grid"><v-text-field v-model.number="settings.cloud_retry_seconds" type="number" min="15" label="云解压重试间隔 / 秒" /><v-text-field v-model.number="settings.cloud_cooldown_seconds" type="number" min="15" label="成功冷却 / 秒" /><v-text-field v-model.number="settings.offline_fallback_seconds" type="number" min="15" label="离线兜底查询 / 秒" /></div></section>
+      <section v-if="settingsSection === 'notifications'" class="settings-section"><h2>通知</h2>
         <v-switch v-model="settings.notification_enabled" label="启用通知" color="primary" hide-details />
         <v-select v-model="settings.notification_provider" label="通知方式" :items="[{ title: 'MS 通知', value: 'ms' }, { title: '常规 Webhook', value: 'webhook' }]" />
         <div class="toggle-row"><v-switch v-model="settings.notification_offline" label="离线通知" color="primary" hide-details /><v-switch v-model="settings.notification_cloud" label="云解压通知" color="primary" hide-details /><v-switch v-model="settings.notification_local" label="本地处理通知" color="primary" hide-details /></div>
@@ -336,8 +351,8 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
         <v-btn variant="text" class="mt-3" @click="action('/api/notification', { api_key: '' }, 'MS 密钥已清除')"><Trash2 :size="16" class="mr-2" />清除密钥</v-btn>
         <v-btn variant="text" class="mt-3" @click="action('/api/notification/test')"><Send :size="16" class="mr-2" />测试通知</v-btn>
       </section>
-      <div class="save-row"><v-btn color="primary" :disabled="loading" @click="saveSettings"><Save :size="17" class="mr-2" />保存设置</v-btn></div>
-      <section class="settings-section"><h2>压缩包密码 <span class="muted">({{ settings.password_count || 0 }})</span></h2><div class="form-grid"><v-text-field v-model="newPassword" label="新增密码" type="password" autocomplete="off" /><v-btn variant="outlined" :disabled="!newPassword" @click="action('/api/passwords', { action: 'add', password: newPassword }).then(() => newPassword = '')"><Plus :size="16" class="mr-2" />添加</v-btn></div><div class="password-list"><div v-for="index in (settings.password_count || 0)" :key="index"><span>密码 {{ index }} · ********</span><button :aria-label="'移除密码' + index" title="移除密码" @click="action('/api/passwords', { action: 'remove', index: index - 1 })"><Trash2 :size="16" /></button></div></div></section>
+      <div v-if="['cloud', 'scheduler', 'notifications'].includes(settingsSection)" class="save-row"><v-btn color="primary" :disabled="loading" @click="saveSettings"><Save :size="17" class="mr-2" />保存设置</v-btn></div>
+      <section v-if="settingsSection === 'passwords'" class="settings-section"><h2>压缩包密码 <span class="muted">({{ settings.password_count || 0 }})</span></h2><div class="form-grid"><v-text-field v-model="newPassword" label="新增密码" type="password" autocomplete="off" /><v-btn variant="outlined" :disabled="!newPassword" @click="action('/api/passwords', { action: 'add', password: newPassword }).then(() => newPassword = '')"><Plus :size="16" class="mr-2" />添加</v-btn></div><div class="password-list"><div v-for="index in (settings.password_count || 0)" :key="index"><span>密码 {{ index }} · ********</span><button :aria-label="'移除密码' + index" title="移除密码" @click="action('/api/passwords', { action: 'remove', index: index - 1 })"><Trash2 :size="16" /></button></div></div></section>
     </template>
 
     <template v-else-if="view === 'maintenance'">
