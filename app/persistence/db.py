@@ -9,6 +9,11 @@ from app.persistence.models import Settings
 
 DEFAULT_SETTINGS = {
     "paused": False,
+    "cloud_root_cid": "",
+    "cloud_archive_cid": "",
+    "cloud_failed_cid": "",
+    "life_monitor_enabled": False,
+    "life_monitor_started": 0,
     "offline_root_cid": "0",
     "cloud_output_cid": "0",
     "offline_extract_cid": "",

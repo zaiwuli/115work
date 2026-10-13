@@ -146,6 +146,16 @@ class P115Adapter:
         count = int(response.get("count", offset + len(raw)))
         return FilePage(files, offset + len(raw) if raw and offset + len(raw) < count else None)
 
+    async def directory_path(self, cid: str) -> list[str]:
+        response = await self.call("fs_files", {
+            "cid": cid, "cur": 1, "limit": 1, "offset": 0, "show_dir": 1,
+        })
+        path = [str(item.get("cid", item.get("file_id", "")))
+                for item in response.get("path", [])]
+        if cid != "0" and (not path or path[-1] != cid):
+            raise AdapterError("CID_NOT_VERIFIED")
+        return path or ["0"]
+
     async def folder(self, parent: str, name: str) -> str:
         async with self.folder_lock:
             offset = 0

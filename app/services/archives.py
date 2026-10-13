@@ -40,6 +40,8 @@ class ArchiveService:
         ))
         if existing and existing.state not in {"CANCELED", "SKIPPED"}:
             if existing.state not in {"SUCCEEDED", "FAILED"} or session.get(Identity, existing.content_key):
+                record(session, existing.id, "DUPLICATE_SKIPPED", existing.stage,
+                       f"同一云文件已有任务，复用任务 {existing.id}，文件ID {file.fid}")
                 return existing
         archive = is_archive(file.name)
         content_key = f"{match_name(file.name)}:{file.size}"
@@ -49,6 +51,8 @@ class ArchiveService:
             prior = session.get(Task, identity.task_id)
             prior_hash = prior.locator.get("sha1", "")
             if not file.sha1 or not prior_hash or prior_hash == file.sha1:
+                record(session, prior.id, "DUPLICATE_SKIPPED", prior.stage,
+                       "压缩包名称与大小命中已有身份，未重复解压")
                 return prior
             content_key += ":" + file.sha1
             conflict = True
@@ -58,6 +62,8 @@ class ArchiveService:
             if resource and resource.task_id:
                 previous = session.get(Task, resource.task_id)
                 if previous.state not in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"} or session.get(Identity, previous.content_key):
+                    record(session, previous.id, "DUPLICATE_SKIPPED", previous.stage,
+                           "文件 SHA1 与大小命中已处理资源，未重复解压")
                     return previous
         policy = evaluate(session, source_id, file.name, file.size)
         from app.persistence.models import Source
@@ -86,6 +92,11 @@ class ArchiveService:
         if matching_offline and not all(item.auto_extract for item in matching_offline):
             auto_extract = False
         settings = self.db.settings()
+        policy = {"squash_root": True, **policy}
+        if settings.get("cloud_archive_cid"):
+            policy.setdefault("archive_cid", settings["cloud_archive_cid"])
+        if settings.get("cloud_failed_cid"):
+            policy.setdefault("cloud_failed_cid", settings["cloud_failed_cid"])
         task = Task(
             object_key=object_key, content_key=content_key, source="115", name=file.name,
             size=file.size, stage="cloud_prepare" if archive and auto_extract else "registered",
@@ -132,6 +143,12 @@ class ArchiveService:
 
     async def scan(self, job):
         cid = job.payload["cid"]
+        settings = self.db.settings()
+        if cid in {settings.get(key) for key in (
+            "cloud_output_cid", "cloud_archive_cid", "cloud_failed_cid",
+        ) if settings.get(key) and settings.get(key) != "0"}:
+            return None
+        started = time.monotonic()
         offset = int(job.payload.get("offset", 0))
         collected = []
         next_offset = None
@@ -181,15 +198,21 @@ class ArchiveService:
                         )))
                         if len(sources) > 1:
                             raise ValueError("AMBIGUOUS_CLOUD_SOURCE")
-                        self.adopt(session, file, source_id=sources[0].id if sources else "")
+                        self.adopt(session, file, source_id=job.payload.get("source_id") or
+                                   (sources[0].id if sources else ""))
             if next_offset is not None or walking:
-                current_job.payload = job.payload | {"offset": next_offset or 0,
+                current_job.payload = current_job.payload | {"offset": next_offset or 0,
                                                      "candidates": candidates, "walk": walking}
                 return time.time() + 5
             self.offline.bind_candidates(
                 session, cid, [CloudFile(**x) for x in candidates], self.adopt,
+                current_job.payload.get("offline_ids"),
             )
-            current_job.payload = {"cid": cid, "offline_only": job.payload.get("offline_only", False),
+            record(session, cid, "SCAN_COMPLETED", "discover",
+                   f"触发：{job.payload.get('reason', '手动检查')}；目标 CID {cid}；"
+                   f"本次读取 {len(collected)} 项，累计候选 {len(candidates)} 项；"
+                   f"耗时 {time.monotonic() - started:.2f} 秒")
+            current_job.payload = current_job.payload | {"offset": 0, "candidates": [], "walk": [],
                                    "discovery_started": job.payload.get("discovery_started", time.time())}
             waiting = session.scalar(select(Task).where(
                 Task.source == "115", Task.stage == "cloud_prepare", Task.state == "READY",
@@ -211,7 +234,7 @@ class ArchiveService:
                 )):
                     item.stage, item.error = "discover_review", "DISCOVERY_DEADLINE_REQUIRES_REVIEW"
             return None
-        return time.time() + 300 if unresolved else None
+        return None
 
     def fail_content(self, session, task, code: str) -> float | None:
         task.error = code
@@ -294,16 +317,16 @@ class ArchiveService:
                         session.get(Task, task_id).output = task.output | {"expected_manifest": expected}
                 output_cid = task.output.get("cid")
                 if not output_cid:
-                    from app.services.folders import durable_folder
+                    from app.services.folders import durable_folder, output_folder
                     root_cid = task.policy["cloud_output_cid"]
                     if task.policy.get("output_date"):
                         root_cid = await durable_folder(
                             self.db, self.adapter, root_cid, task.policy["adopt_date"],
                             f"output-date:{root_cid}:{task.policy['adopt_date']}", task_id,
                         )
-                    output_cid = await durable_folder(
+                    output_cid = await output_folder(
                         self.db, self.adapter, root_cid,
-                        f"{task.name[:80]}-{task_id[:10]}-a{task.attempts}",
+                        PurePosixPath(task.name).stem[:80],
                         f"output-folder:{task_id}:{task.attempts}", task_id,
                     )
                     with self.db.session() as session:

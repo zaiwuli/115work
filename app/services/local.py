@@ -67,6 +67,7 @@ class LocalService:
         return time.time() - previous.stable_since >= self.config.stable_seconds
 
     async def scan(self, job):
+        started = time.monotonic()
         with self.db.session() as session:
             self.store.owned(session, job)
             source = session.get(Source, job.payload["source_id"])
@@ -182,6 +183,9 @@ class LocalService:
                 record(session, task.id, "DISCOVERED", task.stage, task.name, "local")
                 if not unsupported and not waiting:
                     enqueue(session, "local:" + task.id, "local_extract", {"task_id": task.id})
+            record(session, source.id, "LOCAL_SCAN_COMPLETED", "local_scan",
+                   f"目录 {root}；扫描 {len(files)} 个文件；稳定压缩包 {len(archives)} 个；"
+                   f"耗时 {time.monotonic() - started:.2f} 秒")
         return time.time() + 5 if cursor else None
 
     async def document(self, job):
@@ -312,7 +316,18 @@ class LocalService:
         output_root.mkdir(parents=True, exist_ok=True)
         attempt = task.output.get("local_attempt", task.attempts)
         staging = output_root / (".work-" + task.id + f"-a{attempt}")
-        final = output_root / (Path(task.name).stem[:80] + "-" + task.id[:10])
+        final = output_root / task.output.get("local_final_name", Path(task.name).stem[:80])
+        if "local_final_name" not in task.output:
+            if final.exists():
+                final = output_root / (Path(task.name).stem[:80] + "-" + task.id[:10])
+                number = 2
+                while final.exists():
+                    final = output_root / (Path(task.name).stem[:80] + "-" + task.id[:10] + f"-{number}")
+                    number += 1
+            with self.db.session() as session:
+                self.store.owned(session, job)
+                current = session.get(Task, task.id)
+                current.output = current.output | {"local_final_name": final.name}
         evidence_path = output_root / (".manifest-" + task.id + f"-a{attempt}" + ".json")
         if evidence_path.exists():
             manifest = json.loads(evidence_path.read_text(encoding="utf-8"))

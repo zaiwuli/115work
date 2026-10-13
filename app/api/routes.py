@@ -298,6 +298,9 @@ def offline_detail(request: Request, task_id: str):
 @secured.post("/api/115/offline/import", status_code=202)
 @secured.post("/api/v1/offline/import", status_code=202)
 async def import_offline(request: Request):
+    if (request.app.state.config.adapter == "p115"
+            and not request.app.state.db.settings().get("cloud_root_cid")):
+        raise HTTPException(409, detail="CLOUD_ROOT_REQUIRED")
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("application/json"):
         body = ImportRequest.model_validate(await request.json())
@@ -377,8 +380,16 @@ def refresh_sources(request: Request):
             payload = {"cid": source.config["cid"], "offline_only": False} if kind == "cloud_scan" else {
                 "source_id": source.id,
             }
+            if kind == "cloud_scan":
+                payload.update({"source_id": source.id, "one_shot": True, "reason": "手动刷新监测来源"})
             key = "scan-cid:" + payload["cid"] if kind == "cloud_scan" else "scan-source:" + source.id
             enqueue(session, key, kind, payload)
+        for cid in set(session.scalars(select(Offline.target_cid).where(
+            Offline.target_cid != "", Offline.status.not_in(["failed", "submit_failed", "canceled"]),
+        ))):
+            enqueue(session, "scan-cid:" + cid, "cloud_scan", {
+                "cid": cid, "offline_only": True, "one_shot": True, "reason": "手动刷新离线目录",
+            })
     request.app.state.engine.wake.set()
     return {"success": True, "message": "已加入来源扫描队列"}
 
@@ -398,6 +409,7 @@ def get_settings(request: Request):
 async def set_settings(request: Request):
     body = await request.json()
     allowed = set(DEFAULT_SETTINGS) - {"passwords", "paused", "mappings"}
+    allowed -= {"cloud_root_cid", "cloud_archive_cid", "cloud_failed_cid", "life_monitor_started"}
     if set(body) - allowed:
         raise HTTPException(422, detail="UNKNOWN_OR_SECRET_SETTINGS")
     for key, value in body.items():
@@ -409,6 +421,8 @@ async def set_settings(request: Request):
             raise HTTPException(422, detail="INVALID_CID")
         if key == "cloud_extract_by_date" and type(value) is not bool:
             raise HTTPException(422, detail="INVALID_DATE_SETTING")
+        if key == "life_monitor_enabled" and type(value) is not bool:
+            raise HTTPException(422, detail="INVALID_MONITOR_SETTING")
         if key.startswith("notification_") and key not in {
             "notification_webhook", "notification_provider", "notification_template",
         } and type(value) is not bool:
@@ -428,7 +442,10 @@ async def set_settings(request: Request):
             or parsed.hostname not in request.app.state.config.allowed_webhook_hosts
         ):
             raise HTTPException(422, detail="WEBHOOK_HOST_REQUIRES_EXPLICIT_ALLOWLIST")
+    if body.get("life_monitor_enabled") and not request.app.state.db.settings()["life_monitor_enabled"]:
+        body["life_monitor_started"] = time.time()
     request.app.state.db.set_settings(body)
+    request.app.state.engine.wake.set()
     return {"success": True}
 
 
@@ -472,6 +489,11 @@ def validate_source(request, body, source_id=""):
     if body.kind == "115":
         if not isinstance(body.config.get("cid"), str) or not body.config["cid"].isdigit():
             raise HTTPException(422, detail="INVALID_CID")
+        if body.config["cid"] in {request.app.state.db.settings().get(key) for key in
+                                  ("cloud_root_cid", "cloud_output_cid", "cloud_archive_cid", "cloud_failed_cid")
+                                  if request.app.state.db.settings().get(key)}:
+            raise HTTPException(422, detail="SOURCE_OUTPUT_LOOP")
+        body.interval = 0
         if "extract_cid" in body.config and (
             not isinstance(body.config["extract_cid"], str) or
             (body.config["extract_cid"] and not body.config["extract_cid"].isdigit())

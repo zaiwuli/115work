@@ -10,10 +10,18 @@ def enqueue(session, key: str, kind: str, payload: dict, due: float | None = Non
     existing = session.scalar(select(Job).where(Job.key == key))
     if existing:
         if kind == "cloud_scan":
+            merged = existing.payload | payload
+            if "offline_ids" in existing.payload and "offline_ids" in payload:
+                merged["offline_ids"] = list(dict.fromkeys(existing.payload["offline_ids"] + payload["offline_ids"]))
+            else:
+                merged.pop("offline_ids", None)
             existing.payload = existing.payload | {
                 "offline_only": existing.payload.get("offline_only", False) and payload.get("offline_only", False),
             }
+            payload = merged | {"offline_only": existing.payload["offline_only"]}
         if existing.state in {"RUNNING", "LEASED"}:
+            if kind == "cloud_scan":
+                existing.payload = payload
             existing.dirty = True
         elif existing.state not in {"RECONCILING"}:
             old_state = existing.state

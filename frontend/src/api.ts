@@ -60,6 +60,16 @@ export function errorLabel(value: string) {
     FAILED_ARCHIVE_RECONCILIATION_REQUIRED: '请先核对失败原包的归档结果。',
     SOURCE_UNAVAILABLE: '来源目录不可用，请检查路径或挂载状态。',
     REQUEST_FAILED: '请求未成功，请检查后台是否正常运行。',
+    CLOUD_ROOT_REQUIRED: '请先在系统设置中初始化115云根目录。',
+    CLOUD_CONFIGURATION_BUSY: '当前有任务执行，请稍后初始化云目录。',
+    LIFE_MONITOR_DISABLED: '请先启用生活事件监测。',
+    INVALID_MONITOR_SETTING: '监测开关值无效。',
+    TERMINAL_TASK_REQUIRED: '任务尚未结束，暂不能删除。',
+    TASK_OPERATIONS_PENDING: '任务仍有执行中或待核对的操作，暂不能删除。',
+    OFFLINE_OPERATION_PENDING: '离线任务仍在执行或结果不明确，暂不能删除。',
+    CONNECTION_SWITCH_BUSY: '当前任务尚未结束，Cookie已保存，请稍后重新启用连接。',
+    FEATURE_REMOVED: '此功能已移除。',
+    SOURCE_OUTPUT_LOOP: '监测目录不能是工具根目录、解压目录、归档目录或失败目录。',
     UPLOAD_FAILED: '文档上传失败，请重试。',
   }
   return names[value] || (/[a-z]/i.test(value)
@@ -74,6 +84,7 @@ export const stageNames: Record<string, string> = {
   document_copy: '文档处理', postprocess: '原包后处理', join: '多个关联产物',
   legacy_reconcile: '旧记录待核对',
   identity_conflict: '内容身份冲突', failure_archive: '失败原包归档',
+  cloud_monitor: '生活事件监测',
   discover_review: '文件发现待核对', join_review: '多个产物范围待核对',
 }
 export function stateLabel(value: string) { return stateNames[value] || (/^[a-z_]+$/i.test(value || '') ? '状态待核对' : value) }
@@ -83,6 +94,17 @@ export function stageLabel(value: string) { return stageNames[value] || ({
 }[value] || '处理记录') }
 export function textLabel(value: string) {
   if (!value || !/[a-z]/i.test(value)) return value
+  if (/[\u4e00-\u9fff]/.test(value)) return value
+  const events: Record<string, string> = {
+    CLOUD_ROOT_INITIALIZED: '云目录初始化', LIFE_CHECKED: '生活事件检查',
+    SCAN_COMPLETED: '云目录扫描完成', LOCAL_SCAN_COMPLETED: '本地扫描完成',
+    DISCOVERY_SCHEDULED: '离线目录扫描排队', DUPLICATE_SKIPPED: '重复资源已跳过',
+    DISCOVERED: '发现文件', CLOUD_TAKEOVER: '云解压接管', SUBMITTED: '离线已提交',
+    REGISTERED: '登记任务', IMPORT: '导入离线任务', JOB_FAILED: '执行失败',
+  }
+  if (events[value]) return events[value]
+  if (stateNames[value]) return stateNames[value]
+  if (stageNames[value]) return stageNames[value]
   if (/^[A-Z][A-Z0-9_]+$/.test(value)) return errorLabel(value)
   const names: Record<string, string> = {
     'Local archives': '本地压缩包', 'Link inbox': '链接收件箱',

@@ -15,7 +15,7 @@ from sqlalchemy import delete, select
 
 from app.api.auth import authenticate, password_hash
 from app.domain.rules import evaluate
-from app.persistence.models import Audit, Connection, Event, Identity, Rule, Schedule, Settings, Source, Task
+from app.persistence.models import Connection, Event, Identity, Rule, Schedule, Settings, Source, Task
 from app.scheduler.plans import next_run
 from app.scheduler.store import enqueue
 
@@ -28,8 +28,7 @@ def row(model):
 
 
 def audit(request, session, action, target, details=None):
-    session.add(Audit(actor=getattr(request.state, "actor", "admin"), action=action,
-                      target=target, request_id=request.state.request_id, details=details or {}))
+    return None
 
 
 class ConfigCommand(BaseModel):
@@ -130,12 +129,12 @@ async def rule_preview(request: Request):
 
 @router.get("/schedules")
 def schedules(request: Request):
-    with request.app.state.db.session() as session:
-        return {"items": [row(x) for x in session.scalars(select(Schedule))]}
+    raise HTTPException(410, detail="FEATURE_REMOVED")
 
 
 @router.post("/schedules", status_code=201)
 async def add_schedule(request: Request):
+    raise HTTPException(410, detail="FEATURE_REMOVED")
     body = await request.json()
     allowed = {"name", "source_id", "trigger", "config", "timezone", "misfire", "enabled"}
     if set(body) - allowed or body.get("misfire", "coalesce") not in {"coalesce", "skip"}:
@@ -158,6 +157,7 @@ async def add_schedule(request: Request):
 
 @router.patch("/schedules/{schedule_id}")
 async def change_schedule(request: Request, schedule_id: str):
+    raise HTTPException(410, detail="FEATURE_REMOVED")
     body = await request.json()
     with request.app.state.db.session() as session:
         schedule = session.get(Schedule, schedule_id)
@@ -176,6 +176,7 @@ async def change_schedule(request: Request, schedule_id: str):
 
 @router.put("/schedules/{schedule_id}")
 async def edit_schedule(request: Request, schedule_id: str):
+    raise HTTPException(410, detail="FEATURE_REMOVED")
     body = await request.json()
     allowed = {"name", "source_id", "trigger", "config", "timezone", "misfire", "enabled",
                "expected_revision"}
@@ -208,6 +209,7 @@ async def edit_schedule(request: Request, schedule_id: str):
 
 @router.post("/schedules/{schedule_id}/run", status_code=202)
 def run_schedule(request: Request, schedule_id: str):
+    raise HTTPException(410, detail="FEATURE_REMOVED")
     with request.app.state.db.session() as session:
         schedule = session.get(Schedule, schedule_id)
         if not schedule:
@@ -244,7 +246,9 @@ async def add_connection(request: Request):
         session.add(connection)
         session.flush()
         audit(request, session, "CONNECTION_CREATE", connection.id)
-        return {"id": connection.id, "credential_configured": True}
+        identifier = connection.id
+    activated = await activate_connection(request, identifier)
+    return {"id": identifier, "credential_configured": True, **activated}
 
 
 @router.post("/connections/{connection_id}/credentials")
@@ -262,7 +266,7 @@ async def rotate_credentials(request: Request, connection_id: str):
         connection.revision += 1
         connection.health = "UNKNOWN"
         audit(request, session, "CREDENTIAL_ROTATE", connection.id)
-    return {"success": True, "application": "restart_required" if connection.kind == "115" else "next_operation"}
+    return await activate_connection(request, connection_id)
 
 
 @router.post("/connections/{connection_id}/diagnose")
@@ -293,16 +297,31 @@ async def diagnose_connection(request: Request, connection_id: str):
 @router.post("/connections/{connection_id}/activate")
 async def activate_connection(request: Request, connection_id: str):
     state = request.app.state
+    if not hasattr(state, "connection_activation_lock"):
+        state.connection_activation_lock = asyncio.Lock()
+    async with state.connection_activation_lock:
+        paused = state.db.settings()["paused"]
+        state.db.set_settings({"paused": True})
+        try:
+            # Keep the old adapter alive until its in-flight jobs have completed.
+            deadline = time.monotonic() + 60
+            while state.engine.running_jobs:
+                if time.monotonic() >= deadline:
+                    raise HTTPException(409, detail="CONNECTION_SWITCH_BUSY")
+                await asyncio.sleep(0.2)
+            return await _activate_connection(request, connection_id)
+        finally:
+            state.db.set_settings({"paused": paused})
+            state.engine.wake.set()
+
+
+async def _activate_connection(request: Request, connection_id: str):
+    state = request.app.state
     engine = state.engine
     with state.db.session() as session:
         connection = session.get(Connection, connection_id)
-        active = session.get(Settings, "cloud_active")
         if not connection or connection.kind != "115":
             raise ValueError("115_CONNECTION_REQUIRED")
-        if not state.db.settings()["paused"] or engine.running_jobs or (
-            active and active.value["value"]
-        ):
-            raise HTTPException(409, detail="PAUSE_AND_WAIT_FOR_ACTIVE_OPERATIONS")
         cookie = state.secrets.decrypt(connection.credential)
     from app.adapters.p115 import P115Adapter
     from app.scheduler.governor import RemoteGovernor
@@ -312,6 +331,7 @@ async def activate_connection(request: Request, connection_id: str):
     previous = engine.adapter
     engine.adapter = engine.offline.adapter = engine.archives.adapter = selected
     engine.retention.adapter = engine.local.transfer.adapter = selected
+    engine.monitor.adapter = selected
     engine.offline.snapshot = None
     state.config.adapter = "p115"
     state.db.set_settings({"adapter_mode": "p115"})
@@ -320,6 +340,11 @@ async def activate_connection(request: Request, connection_id: str):
         await close()
     with state.db.session() as session:
         audit(request, session, "115_ACTIVATE", connection_id)
+        from app.persistence.models import Job
+        for job in session.scalars(select(Job).where(
+            Job.state == "READY", Job.error == "AUTH_REQUIRED",
+        )):
+            job.due, job.error = time.time(), ""
     return {"success": True, "application": "activated"}
 
 
@@ -432,15 +457,83 @@ async def approve_delete(request: Request, task_id: str):
 @router.get("/logs")
 def logs(request: Request, after: int = 0, page_size: int = 100):
     with request.app.state.db.session() as session:
-        return {"items": [row(x) for x in session.scalars(select(Event).where(Event.id > after)
-                          .order_by(Event.id.desc()).limit(min(200, max(1, page_size))))]}
+        items = []
+        for event in session.scalars(select(Event).where(Event.id > after)
+                .order_by(Event.id.desc()).limit(min(200, max(1, page_size)))):
+            task = session.get(Task, event.task_id)
+            details = {"关联编号": event.task_id, "工作记录": event.message}
+            if task:
+                details.update({
+                    "文件名": task.name, "文件大小（字节）": task.size,
+                    "输入路径或文件ID": task.locator.get("path") or task.locator.get("fid"),
+                    "输入目录CID": task.locator.get("cid", ""),
+                    "输出路径或CID": task.output.get("path") or task.output.get("cid", ""),
+                    "当前错误代码": task.error or "无",
+                    "尝试次数": task.attempts, "状态": task.state,
+                    "校验方式": task.output.get("verification", ""),
+                    "创建至完成耗时（秒）": round(task.completed_at - task.created_at, 2)
+                        if task.completed_at else "未完成",
+                    "输出文件数量": len(task.output.get("actual_manifest", [])),
+                })
+            items.append(row(event) | {"details": details})
+        return {"items": items}
 
 
 @router.get("/audit")
 def audits(request: Request, page: int = 1):
+    raise HTTPException(410, detail="FEATURE_REMOVED")
+
+
+@router.post("/cloud/root")
+async def cloud_root(request: Request):
+    body = await request.json()
+    cid = body.get("cid")
+    if not isinstance(cid, str) or not cid.isdigit():
+        raise HTTPException(422, detail="INVALID_CID")
+    from app.services.cloud_monitor import initialize_root
+    return await initialize_root(request.app.state, cid)
+
+
+@router.post("/cloud/monitor/check", status_code=202)
+def monitor_check(request: Request):
+    if not request.app.state.db.settings()["life_monitor_enabled"]:
+        raise HTTPException(409, detail="LIFE_MONITOR_DISABLED")
     with request.app.state.db.session() as session:
-        return {"items": [row(x) for x in session.scalars(select(Audit).order_by(Audit.id.desc())
-                          .offset(max(0, page - 1) * 100).limit(100))]}
+        enqueue(session, "life-monitor", "life_monitor", {"manual": True})
+    request.app.state.engine.wake.set()
+    return {"success": True}
+
+
+@router.delete("/rules/{rule_id}")
+def remove_rule(request: Request, rule_id: str):
+    with request.app.state.db.session() as session:
+        rule = session.get(Rule, rule_id)
+        if not rule:
+            raise HTTPException(404, detail="RULE_NOT_FOUND")
+        session.delete(rule)
+    return {"success": True}
+
+
+@router.delete("/tasks/{task_id}")
+def remove_task(request: Request, task_id: str):
+    from app.services.deletion import delete_task
+    with request.app.state.db.session() as session:
+        try:
+            delete_task(session, task_id)
+        except ValueError as exc:
+            raise HTTPException(409, detail=str(exc)) from None
+    return {"success": True}
+
+
+@router.delete("/offline/{task_id}")
+def remove_offline(request: Request, task_id: str):
+    from app.services.deletion import delete_offline
+    with request.app.state.db.session() as session:
+        try:
+            delete_offline(session, task_id)
+        except ValueError as exc:
+            raise HTTPException(409, detail=str(exc)) from None
+    return {"success": True}
 
 
 @router.get("/system/capabilities")

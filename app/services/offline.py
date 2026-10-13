@@ -9,7 +9,7 @@ from app.adapters.p115 import AdapterError
 from app.domain.links import extract_links, match_name
 from app.persistence.models import (
     Batch, BatchItem, DateFolder, Offline, Operation, ResourceLink,
-    OfflineExecution,
+    OfflineExecution, Settings,
 )
 from app.scheduler.store import enqueue
 from app.services.events import record
@@ -60,6 +60,17 @@ class OfflineService:
             session.add(BatchItem(batch_id=batch.id, task_id=existing.id, duplicate=duplicate))
         if created:
             enqueue(session, "offline-submit:" + batch.id, "offline_submit", {"batch_id": batch.id})
+            window = next((x for x in session.scalars(select(Settings).where(
+                Settings.key.startswith("offline-window:"),
+            )) if x.value["root"] == root and x.value["date"] == date
+                and now < x.value["start"] + 270), None)
+            ids = list(session.scalars(select(Offline.id).where(Offline.batch_id == batch.id)))
+            if window:
+                window.value = window.value | {"ids": window.value["ids"] + ids}
+            else:
+                session.add(Settings(key="offline-window:" + batch.id, value={
+                    "root": root, "date": date, "start": now, "ids": ids, "round": 0,
+                }))
         record(session, batch.id, "IMPORT", "offline_submit",
                f"Queued {created}; duplicates {duplicates}; invalid {len(errors)}", "offline")
         return {"batch_id": batch.id, "queued": created, "duplicates": duplicates,
@@ -69,6 +80,29 @@ class OfflineService:
         async with self.import_lock:
             with self.db.session() as session:
                 return self.register(session, text, auto_extract, now)
+
+    def schedule_discovery(self, session, now):
+        for window in session.scalars(select(Settings).where(Settings.key.startswith("offline-window:"))):
+            value = window.value
+            number = value["round"]
+            if number >= 2 or now < value["start"] + (300 if number == 0 else 600):
+                continue
+            grouped = {}
+            for identifier in value["ids"]:
+                item = session.get(Offline, identifier)
+                if not item or not item.target_cid or item.status in {"failed", "submit_failed", "canceled"}:
+                    continue
+                if session.scalar(select(ResourceLink.id).where(ResourceLink.offline_id == identifier)):
+                    continue
+                grouped.setdefault(item.target_cid, []).append(identifier)
+            for cid, ids in grouped.items():
+                enqueue(session, "scan-cid:" + cid, "cloud_scan", {
+                    "cid": cid, "offline_only": True, "offline_ids": ids, "one_shot": True,
+                    "reason": "离线窗口首扫" if number == 0 else "离线窗口唯一补扫",
+                })
+                record(session, cid, "DISCOVERY_SCHEDULED", "discover",
+                       f"目标 CID {cid}，本轮 {len(ids)} 条，第 {number + 1} 次扫描")
+            window.value = value | {"round": number + 1}
 
     async def target_folder(self, root: str, date: str) -> str:
         async with self.date_lock:
@@ -195,14 +229,14 @@ class OfflineService:
                     current.next_check = now + interval if status in POLLABLE else None
                     if status == "success":
                         current.stage = "discover"
-                        enqueue(session, "scan-cid:" + current.target_cid, "cloud_scan",
-                                {"cid": current.target_cid, "offline_only": True}, now + 10)
 
-    def bind_candidates(self, session, cid: str, candidates: list, task_for_file):
+    def bind_candidates(self, session, cid: str, candidates: list, task_for_file, offline_ids=None):
         tasks = list(session.scalars(select(Offline).where(
             Offline.target_cid == cid,
             Offline.status.in_(list(POLLABLE | {"success"})),
         )))
+        if offline_ids is not None:
+            tasks = [item for item in tasks if item.id in offline_ids]
         for item in tasks:
             if session.scalar(select(ResourceLink).where(ResourceLink.offline_id == item.id)):
                 continue
@@ -268,6 +302,11 @@ class OfflineService:
                 item.generation += 1
                 enqueue(session, "offline-submit:" + item.batch_id, "offline_submit",
                         {"batch_id": item.batch_id})
+                key = f"offline-window:retry:{item.id}:{item.generation}"
+                session.add(Settings(key=key, value={
+                    "root": item.root_cid, "date": item.target_date,
+                    "start": time.time(), "ids": [item.id], "round": 0,
+                }))
                 record(session, item.id, "MANUAL_RETRY", "offline_submit", "Retry authorized")
         return len(tasks)
 

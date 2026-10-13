@@ -19,7 +19,9 @@ import AdminViews from './AdminViews.vue'
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/:view(connections|rules|schedules|security|logs|audit)', component: AdminViews },
+    { path: '/:view(connections|rules|security|logs)', component: AdminViews },
+    { path: '/schedules', redirect: '/settings' },
+    { path: '/audit', redirect: '/logs' },
     { path: '/:view?', component: Workspace },
   ],
 })

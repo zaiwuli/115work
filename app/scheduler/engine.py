@@ -3,6 +3,7 @@ import logging
 import time
 import uuid
 import socket
+import traceback
 from urllib.parse import urlsplit
 
 import httpx
@@ -10,16 +11,16 @@ from sqlalchemy import select
 
 from app.adapters.p115 import AdapterError
 from app.adapters.safe_http import SafeHTTPTransport
-from app.persistence.models import Event, Job, Offline, Outbox, Schedule, Source, Task, Transfer
-from app.scheduler.plans import next_run
+from app.persistence.models import Event, Job, Outbox, Schedule, Source, Task, Transfer
 from app.scheduler.governor import RemoteGovernor
 from app.scheduler.store import JobStore, enqueue
 from app.services.archives import ArchiveService
-from app.services.events import transition
+from app.services.events import record, transition
 from app.services.local import LocalService
 from app.services.offline import OfflineService
 from app.services.retention import RetentionService
 from app.services.transfers import TransferService
+from app.services.cloud_monitor import CloudMonitor
 from app.services.notifications import enabled as notification_enabled, ms_payload, normalize_ms_url
 
 
@@ -44,6 +45,7 @@ class Engine:
         self.watchers = {}
         self.retention = RetentionService(db, config, self.store, adapter)
         self.local.transfer = TransferService(db, config, self.store, adapter)
+        self.monitor = CloudMonitor(db, adapter)
 
     def initialize(self):
         self.store.recover()
@@ -63,11 +65,8 @@ class Engine:
             # Read-only jobs can be resumed; mutating workflows inspect their journals.
             for job in session.scalars(select(Job).where(Job.state == "RECONCILING")):
                 job.state, job.due = "READY", time.time()
-            for offline in session.scalars(select(Offline).where(
-                Offline.status == "success", Offline.stage == "discover",
-            )):
-                enqueue(session, "scan-cid:" + offline.target_cid, "cloud_scan",
-                        {"cid": offline.target_cid, "offline_only": True})
+            for schedule in session.scalars(select(Schedule)):
+                schedule.enabled = False
             if not session.scalar(select(Source).limit(1)):
                 session.add(Source(name="本地压缩包", kind="local",
                                    config={"path": str(self.config.local_path("watch"))}))
@@ -85,34 +84,17 @@ class Engine:
         now = time.time()
         with self.db.session() as session:
             self.offline.schedule_poll(session, now)
+            self.offline.schedule_discovery(session, now)
+            if self.config.adapter == "p115":
+                self.monitor.schedule(session, now)
             for source in session.scalars(select(Source).where(
                 Source.enabled, Source.interval > 0, Source.next_run <= now,
             )):
                 if source.kind == "115":
-                    enqueue(session, "scan-cid:" + source.config["cid"], "cloud_scan",
-                            {"cid": source.config["cid"], "offline_only": False})
+                    continue
                 else:
                     enqueue(session, "scan-source:" + source.id, "local_scan", {"source_id": source.id})
                 source.next_run = now + source.interval
-            for schedule in session.scalars(select(Schedule).where(
-                Schedule.enabled, Schedule.next_run <= now, Schedule.trigger != "event",
-            )):
-                source = session.get(Source, schedule.source_id)
-                if schedule.misfire == "skip" and now - schedule.next_run > 60:
-                    schedule.next_run = next_run(schedule.trigger, schedule.config, schedule.timezone, now)
-                    continue
-                if source and source.enabled:
-                    kind = "cloud_scan" if source.kind == "115" else "local_scan"
-                    payload = {"cid": source.config["cid"], "offline_only": False} if source.kind == "115" else {"source_id": source.id}
-                    key = "scan-cid:" + source.config["cid"] if source.kind == "115" else "scan-source:" + source.id
-                    enqueue(session, key, kind, payload)
-                elif schedule.config.get("action") == "cache_gc":
-                    enqueue(session, "cache-gc", "cache_gc", {})
-                schedule.last_slot = str(schedule.next_run)
-                if schedule.trigger == "once":
-                    schedule.enabled = False
-                else:
-                    schedule.next_run = next_run(schedule.trigger, schedule.config, schedule.timezone, now)
             if session.scalar(select(Outbox).where(Outbox.status == "pending",
                                                    Outbox.next_run <= now)):
                 enqueue(session, "outbox", "notifications", {})
@@ -128,6 +110,7 @@ class Engine:
         work = None
         try:
             handler = {
+                "life_monitor": self.monitor.run,
                 "offline_submit": self.offline.submit_job,
                 "offline_poll": self.poll_job,
                 "cloud_scan": self.archives.scan,
@@ -156,12 +139,19 @@ class Engine:
                 str(exc) if isinstance(exc, ValueError) else "INTERNAL_EXECUTION_ERROR"
             )
             logger.warning("job=%s kind=%s error=%s", job.id, job.kind, code[:100])
+            if code == "INTERNAL_EXECUTION_ERROR":
+                frames = traceback.extract_tb(exc.__traceback__)
+                logger.warning("job=%s exception_type=%s frames=%s", job.id,
+                               type(exc).__name__, " > ".join(
+                                   f"{frame.name}:{frame.lineno}" for frame in frames))
             with self.db.session() as session:
                 try:
                     current = self.store.owned(session, job)
                 except RuntimeError:
                     return
                 current.error = code[:100]
+                record(session, job.id, "JOB_FAILED", job.kind,
+                       f"调度任务失败；错误代码 {code[:100]}；异常类型 {type(exc).__name__}")
                 if job.kind == "local_extract":
                     task = session.get(Task, job.payload["task_id"])
                     transfer = session.get(Transfer, task.id)
@@ -268,6 +258,7 @@ class Engine:
                 "offline_submit", "offline_poll", "cloud_scan", "cloud_extract",
                 "local_scan", "local_extract", "document", "notifications",
                 "postprocess", "cache_gc", "document_copy", "failure_archive",
+                "life_monitor",
             ]
             kinds = ["notifications", "cache_gc"] if paused else all_kinds
             active_jobs = None

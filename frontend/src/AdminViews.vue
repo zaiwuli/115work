@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { Plus, RefreshCw, X, Save, Play, Shield, Link, KeyRound, Search, Trash2, Archive, Check, FileClock } from 'lucide-vue-next'
+import { Plus, RefreshCw, X, Save, Play, Shield, Link, KeyRound, Search, Trash2, Archive, FileClock } from 'lucide-vue-next'
 import { api, date, stateLabel, textLabel } from './api'
 import { useSystem } from './store'
 const system = useSystem()
@@ -9,7 +9,7 @@ const canWrite = computed(() => system.status?.role !== 'readonly')
 
 const route = useRoute()
 const view = computed(() => String(route.params.view))
-const titles: Record<string, string> = { connections: '连接管理', rules: '处理规则', schedules: '自动计划', security: '安全管理', logs: '事件日志', audit: '操作审计' }
+const titles: Record<string, string> = { connections: '连接管理', rules: '处理规则', security: '安全管理', logs: '工作日志' }
 const items = ref<any[]>([])
 const sources = ref<any[]>([])
 const error = ref('')
@@ -48,10 +48,10 @@ const newPassword = ref('')
 const previewName = ref('')
 const preview = ref<any>(null)
 const diagnosis = ref<any>(null)
-const qr = ref<any>(null)
 const directory = ref('0')
 const browser = ref<any[]>([])
 const browseConnection = ref('')
+const deletingRule = ref<any>(null)
 
 async function load() {
   busy.value = true
@@ -76,7 +76,8 @@ async function command(path: string, body: unknown = {}, method?: string) {
 }
 function open(item?: any) {
   editing.value = item || null
-  name.value = item?.name || ''
+  credential.value = ''
+  name.value = item?.name || (view.value === 'connections' ? '115' : '')
   sourceId.value = item?.source_id || ''
   pattern.value = item?.config.pattern || '*'
   originalAction.value = item?.config.original_action || 'retain'
@@ -126,6 +127,15 @@ async function save() {
   }
   if (result) { opened.value = false; credential.value = '' }
 }
+async function saveCredentials() {
+  const result = await command('/api/v1/connections/' + editing.value.id + '/credentials',
+    { credential: credential.value, expected_revision: editing.value.revision })
+  if (result) {
+    credential.value = ''
+    opened.value = false
+    message.value = 'Cookie 已保存，115连接已自动启用'
+  }
+}
 async function browse(item: any) {
   browseConnection.value = item.id
   const body = item.kind === '115' ? { cid: directory.value } : { path: item.config.root }
@@ -157,15 +167,14 @@ watch(view, () => { items.value = []; message.value = ''; void load() }, { immed
       </tbody></table><div v-if="!items.length" class="empty"><Link :size="32" /><span>暂无连接</span></div></div>
       <p v-if="diagnosis" class="mono mt-5">{{ stateLabel(diagnosis.status) }}</p>
       <section v-if="browser.length" class="settings-section"><h2>目录列表</h2><div v-for="file in browser" :key="file.id || file.fid" class="event-line"><span>{{ file.name }}</span><small>{{ file.path || file.cid }} · {{ file.size }}</small></div></section>
-      <section class="settings-section"><h2>115 扫码登录</h2><v-btn variant="outlined" :disabled="busy" @click="command('/api/v1/auth/115/qrcode').then(x => qr = x)"><KeyRound :size="17" class="mr-2" />生成二维码</v-btn>
-        <div v-if="qr" class="qr-area"><img :src="qr.image" alt="115 登录二维码" width="220" height="220" /><v-btn variant="outlined" @click="command('/api/v1/auth/115/qrcode/' + qr.id).then(x => message = x?.status || '')"><Check :size="17" class="mr-2" />查询扫码状态</v-btn></div>
+      <section v-if="canWrite" class="settings-section"><h2>115 Cookie 登录</h2><v-btn variant="outlined" :disabled="busy" @click="open(items.find(x => x.kind === '115'))"><KeyRound :size="17" class="mr-2" />{{ items.some(x => x.kind === '115') ? '更新 Cookie' : '输入 Cookie' }}</v-btn>
       </section>
     </template>
 
     <template v-else-if="view === 'rules'">
       <div class="table-wrap"><table><thead><tr><th>规则</th><th>来源</th><th>匹配</th><th>流程</th><th>原包策略</th><th>操作</th></tr></thead><tbody>
         <tr v-for="item in items" :key="item.id"><td><strong>{{ item.name }}</strong><small>版本 {{ item.revision }}</small></td><td>{{ sources.find(x => x.id === item.source_id)?.name || '所有来源' }}</td><td>{{ item.config.pattern || '*' }}</td><td>{{ stateLabel(item.config.workflow || 'auto') }}</td><td>{{ stateLabel(item.config.original_action || 'retain') }}</td>
-          <td><button v-if="canWrite" class="file-link" aria-label="编辑规则" title="编辑规则" @click="open(item)"><Save :size="17" /></button></td></tr>
+          <td><div v-if="canWrite" class="row-actions"><button class="file-link" aria-label="编辑规则" title="编辑规则" @click="open(item)"><Save :size="17" /></button><button aria-label="删除规则" title="删除规则" @click="deletingRule = item"><Trash2 :size="17" /></button></div></td></tr>
       </tbody></table><div v-if="!items.length" class="empty"><Archive :size="32" /><span>暂无规则</span></div></div>
       <section v-if="canWrite" class="settings-section"><h2>规则预览</h2><div class="form-grid"><v-text-field v-model="previewName" label="文件名" /><v-btn variant="outlined" :disabled="!previewName" @click="command('/api/v1/rules/preview', { name: previewName, size: 0, source_id: sourceId }).then(x => preview = x)"><Search :size="17" class="mr-2" />预览</v-btn></div><p v-if="preview" class="mono mt-4">{{ stateLabel(preview.policy.workflow || 'auto') }}</p></section>
     </template>
@@ -187,12 +196,12 @@ watch(view, () => { items.value = []; message.value = ''; void load() }, { immed
 
     <template v-else>
       <div class="table-wrap"><table><thead><tr><th>时间</th><th>事件 / 操作</th><th>阶段 / 对象</th><th>详情</th></tr></thead><tbody>
-        <tr v-for="item in items" :key="item.id"><td>{{ date(item.created_at) }}</td><td>{{ textLabel(item.kind || item.action) }}<small>{{ textLabel(item.actor || '') }}</small></td><td>{{ textLabel(item.stage || item.target) }}</td><td class="path-cell">{{ textLabel(item.message || JSON.stringify(item.details)) }}</td></tr>
+        <tr v-for="item in items" :key="item.id"><td>{{ date(item.created_at) }}</td><td>{{ textLabel(item.kind || item.action) }}</td><td>{{ textLabel(item.stage || item.target) }}</td><td class="path-cell"><div>{{ textLabel(item.message || '') }}</div><details v-if="item.details && Object.keys(item.details).length"><summary>工作详情</summary><dl><template v-for="(value, key) in item.details" :key="key"><dt>{{ key }}</dt><dd class="path-cell">{{ typeof value === 'object' ? JSON.stringify(value, null, 2) : (String(key) === '当前状态' ? textLabel(String(value)) : String(value)) }}</dd></template></dl></details></td></tr>
       </tbody></table><div v-if="!items.length" class="empty">暂无记录</div></div>
     </template>
 
     <v-dialog v-model="opened" max-width="600"><v-card><header class="dialog-heading"><h2>{{ editing ? '编辑' : '添加' }}{{ titles[view] }}</h2><v-btn icon variant="text" aria-label="关闭" @click="opened = false"><X :size="20" /></v-btn></header>
-      <v-card-text><v-form class="dialog-form" @submit.prevent="editing && view === 'connections' ? command('/api/v1/connections/' + editing.id + '/credentials', { credential, expected_revision: editing.revision }).then(x => x && (opened = false)) : save()">
+      <v-card-text><v-form class="dialog-form" @submit.prevent="editing && view === 'connections' ? saveCredentials() : save()">
         <template v-if="view === 'connections'"><v-text-field v-if="!editing" v-model="name" label="连接名称" /><v-select v-if="!editing" v-model="kind" :items="[{ title: '115 Cookie', value: '115' }]" label="类型" /><v-text-field v-if="!editing && kind === '115'" v-model="directory" label="根 CID" /><v-text-field v-model="credential" type="password" label="115 Cookie" autocomplete="off" /></template>
         <template v-else><v-text-field v-model="name" label="名称" /><v-select v-model="sourceId" :items="[{ title: '所有来源', value: '' }, ...sources.map(x => ({ title: x.name, value: x.id }))]" label="来源" aria-label="来源" />
           <template v-if="view === 'rules'">
@@ -200,17 +209,13 @@ watch(view, () => { items.value = []; message.value = ''; void load() }, { immed
             <v-select v-model="workflow" :items="[{ title: '自动', value: 'auto' }, { title: '本地', value: 'local' }, { title: '云端', value: 'cloud' }, { title: '忽略', value: 'ignore' }]" label="工作流" />
             <v-select v-model="originalAction" :items="[{ title: '保留', value: 'retain' }, { title: '归档', value: 'archive' }]" label="原包策略" />
             <v-select v-model="documentAction" :items="[{ title: '只读登记', value: 'register' }, { title: '复制', value: 'copy' }, { title: '归档', value: 'archive' }]" label="普通文档" />
-            <v-text-field v-model="archiveCid" label="云原包归档 CID" />
-            <v-text-field v-model="failedCid" label="云解压失败归档 CID" />
-            <v-switch v-model="documentLinks" label="提取云文档中的链接" color="primary" />
             <v-switch v-model="disableRecursion" label="禁止递归解压" color="primary" />
-            <v-switch v-model="recurseIso" label="解压 ISO 内压缩包" color="primary" />
             <v-switch v-model="squashRoot" label="展开同名根目录" color="primary" />
           </template>
           <template v-else><v-select v-model="trigger" :items="[{ title: '固定间隔', value: 'interval' }, { title: 'Cron', value: 'cron' }]" label="触发" /><v-text-field v-if="trigger === 'interval'" v-model.number="interval" type="number" min="15" label="间隔 / 秒" /><v-text-field v-else v-model="expression" label="Cron 表达式" /><v-text-field v-model="timezone" label="时区" /></template>
         </template>
-        <v-switch v-if="view === 'rules'" v-model="extractIsos" label="处理 ISO 镜像" color="primary" />
-        <v-btn type="submit" color="primary" :disabled="busy"><Save :size="17" class="mr-2" />保存</v-btn>
+        <v-btn type="submit" color="primary" :disabled="busy || (view === 'connections' && !credential.trim())"><Save :size="17" class="mr-2" />保存</v-btn>
       </v-form></v-card-text></v-card></v-dialog>
   </section>
+  <v-dialog :model-value="!!deletingRule" max-width="480" @update:model-value="!$event && (deletingRule = null)"><v-card><v-card-title>删除规则“{{ deletingRule?.name }}”？</v-card-title><v-card-actions><v-spacer /><v-btn variant="text" @click="deletingRule = null">返回</v-btn><v-btn color="error" @click="command('/api/v1/rules/' + deletingRule.id, undefined, 'DELETE').then(x => x && (deletingRule = null))">删除</v-btn></v-card-actions></v-card></v-dialog>
 </template>

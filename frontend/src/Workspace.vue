@@ -60,7 +60,7 @@ const newSource = ref({ name: '', kind: 'local', path: '', cid: '', extract_cid:
 const newMapping = ref({ virtual_root: '', container_root: '', host_path: '', root_cid: '', connection: '' })
 const diagnosisPath = ref('')
 const diagnosis = ref<any>(null)
-const confirmation = ref<{ title: string, endpoint: string, body: unknown } | null>(null)
+const confirmation = ref<{ title: string, endpoint: string, body?: unknown, method?: string } | null>(null)
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 const statistics = computed(() => [
@@ -172,7 +172,7 @@ async function sendDocument() {
 }
 async function saveSettings() {
   const values: any = {}
-  for (const key of ['offline_root_cid', 'offline_extract_cid', 'cloud_extract_by_date', 'cloud_output_cid', 'cloud_retry_seconds',
+  for (const key of ['life_monitor_enabled', 'cloud_extract_by_date', 'cloud_retry_seconds',
     'cloud_cooldown_seconds', 'offline_fallback_seconds', 'notification_offline',
     'notification_cloud', 'notification_local', 'notification_webhook',
     'notification_enabled', 'notification_provider', 'notification_template',
@@ -193,7 +193,11 @@ async function confirm() {
   if (!confirmation.value) return
   const value = confirmation.value
   confirmation.value = null
-  await action(value.endpoint, value.body)
+  try {
+    await api(value.endpoint, value.body, value.method)
+    message.value = '操作成功'
+    await load()
+  } catch (cause) { error.value = (cause as Error).message }
 }
 watch(view, () => { rows.value = []; page.value = 1; message.value = ''; void load() }, { immediate: true })
 watch([page, stateFilter], () => void load())
@@ -265,7 +269,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
               <button v-if="task.stage === 'local_fallback' && task.state === 'WAITING_APPROVAL'" title="批准本地兜底" aria-label="批准本地兜底" @click="confirmation = { title: '批准下载原包并进行本地解压？', endpoint: '/api/v1/tasks/' + task.id + '/commands', body: { action: 'approve', expected_version: task.version } }"><Download :size="17" /></button>
               <button v-if="task.output.postprocess_result === 'FAILED'" title="重试后处理" aria-label="重试后处理" @click="action('/api/v1/tasks/' + task.id + '/postprocess/retry')"><RotateCcw :size="17" /></button>
               <button v-if="!['SUCCEEDED', 'FAILED', 'CANCELED', 'SKIPPED'].includes(task.state)" title="请求取消" aria-label="请求取消任务" @click="confirmation = { title: '请求取消此任务？', endpoint: '/api/v1/tasks/' + task.id + '/commands', body: { action: 'cancel' } }"><X :size="17" /></button>
-              <button v-if="view === 'history'" title="隐藏记录" aria-label="隐藏历史记录" @click="action('/api/v1/tasks/' + task.id + '/commands', { action: 'hide' })"><Trash2 :size="17" /></button>
+              <button v-if="['SUCCEEDED', 'FAILED', 'CANCELED', 'SKIPPED'].includes(task.state)" title="删除任务" aria-label="删除任务记录" @click="confirmation = { title: '彻底删除此任务及去重记录？原包和解压结果保留，下次发现可能重新解压。', endpoint: '/api/v1/tasks/' + task.id, method: 'DELETE' }"><Trash2 :size="17" /></button>
               </template>
             </div></td>
           </tr>
@@ -291,7 +295,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
           <td>{{ task.target_date }}<small class="mono">CID {{ task.target_cid || '待创建' }}</small><small v-if="task.import_date !== task.target_date">导入批次 {{ task.import_date }}</small></td>
           <td><span class="state-tag" :class="tone(task.status)">{{ stateLabel(task.status) }}</span><small class="error-text" v-if="task.error">{{ textLabel(task.error) }}</small></td>
           <td>{{ stageLabel(task.pipeline_status) }}<small v-if="task.artifact_count">关联产物 {{ task.artifact_count }} 项</small><small>查询 {{ task.check_count }} 次 · 重试 {{ task.retry_count }} 次</small></td>
-          <td><div class="row-actions"><button v-if="['failed', 'submit_failed'].includes(task.status)" aria-label="重试离线任务" title="重试" @click="action('/api/115/offline/retry', { task_id: task.id })"><RotateCcw :size="17" /></button><button v-for="archive in task.archives" :key="archive.id" title="关联任务" aria-label="查看关联任务" @click="showTask(archive)"><ArrowUpRight :size="17" /></button></div></td>
+          <td><div class="row-actions"><button v-if="['failed', 'submit_failed'].includes(task.status)" aria-label="重试离线任务" title="重试" @click="action('/api/115/offline/retry', { task_id: task.id })"><RotateCcw :size="17" /></button><button v-for="archive in task.archives" :key="archive.id" title="关联任务" aria-label="查看关联任务" @click="showTask(archive)"><ArrowUpRight :size="17" /></button><button v-if="canWrite && ['queued','success','failed','submit_failed','canceled'].includes(task.status)" title="删除离线记录" aria-label="删除离线记录" @click="confirmation = { title: '彻底删除此离线记录？云文件及关联解压任务保留。', endpoint: '/api/v1/offline/' + task.id, method: 'DELETE' }"><Trash2 :size="17" /></button></div></td>
         </tr>
       </tbody></table><div v-if="!offlineItems.length" class="empty"><Download :size="32" /><span>暂无离线记录</span></div></div>
     </template>
@@ -318,7 +322,8 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     </template>
 
     <template v-else-if="view === 'settings'">
-      <section class="settings-section"><h2>115 目录</h2><div class="form-grid"><v-text-field v-model="settings.offline_root_cid" label="离线日期目录的父 CID" /><v-text-field v-model="settings.offline_extract_cid" label="离线原包的云解压输出 CID" /><v-text-field v-model="settings.cloud_output_cid" label="其他云原包的默认解压输出 CID" /></div><v-switch v-model="settings.cloud_extract_by_date" label="云解压输出按日期建目录" color="primary" hide-details /></section>
+      <section class="settings-section"><h2>115 云根目录</h2><div class="form-grid"><v-text-field v-model="settings.cloud_root_cid" label="根目录 CID" /><v-btn :disabled="loading || !settings.cloud_root_cid" color="primary" @click="action('/api/v1/cloud/root', { cid: settings.cloud_root_cid }, '云目录已初始化')"><FolderOpen :size="17" class="mr-2" />初始化目录</v-btn></div><div class="form-grid"><v-text-field :model-value="settings.offline_root_cid" label="离线目录 CID" readonly /><v-text-field :model-value="settings.cloud_output_cid" label="解压目录 CID" readonly /><v-text-field :model-value="settings.cloud_archive_cid" label="归档目录 CID" readonly /><v-text-field :model-value="settings.cloud_failed_cid" label="失败目录 CID" readonly /></div><v-switch v-model="settings.cloud_extract_by_date" label="云解压输出按日期建目录" color="primary" hide-details /></section>
+      <section class="settings-section"><h2>云目录监测</h2><div class="import-actions"><v-switch v-model="settings.life_monitor_enabled" label="启用生活事件监测（每30分钟）" color="primary" hide-details /><v-btn variant="outlined" to="/sources"><FolderOpen :size="17" class="mr-2" />监测目录管理</v-btn><v-btn variant="outlined" :disabled="loading || !settings.life_monitor_enabled" @click="action('/api/v1/cloud/monitor/check', {}, '已加入生活事件检查队列')"><RefreshCw :size="17" class="mr-2" />立即检查</v-btn></div></section>
       <section class="settings-section"><h2>调度节奏</h2><div class="form-grid"><v-text-field v-model.number="settings.cloud_retry_seconds" type="number" min="15" label="云解压重试间隔 / 秒" /><v-text-field v-model.number="settings.cloud_cooldown_seconds" type="number" min="15" label="成功冷却 / 秒" /><v-text-field v-model.number="settings.offline_fallback_seconds" type="number" min="15" label="离线兜底查询 / 秒" /></div></section>
       <section class="settings-section"><h2>通知</h2>
         <v-switch v-model="settings.notification_enabled" label="启用通知" color="primary" hide-details />
@@ -355,7 +360,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
         <template v-if="newSource.kind === '115'"><v-text-field v-model="newSource.cid" label="目录 CID" /><v-text-field v-model="newSource.extract_cid" label="独立云解压输出 CID" /></template>
         <template v-else><v-text-field v-model="newSource.path" label="授权的本地 / 容器路径" /><v-text-field v-if="newSource.kind !== 'inbox'" v-model="newSource.output_path" label="独立解压输出路径" /></template>
         <v-textarea v-if="['local', 'inbox'].includes(newSource.kind)" v-model="sourceExcludes" label="排除路径" rows="3" />
-        <v-text-field v-model.number="newSource.interval" type="number" label="扫描间隔 / 秒" />
+        <v-text-field v-if="newSource.kind !== '115'" v-model.number="newSource.interval" type="number" label="扫描间隔 / 秒" />
         <v-btn type="submit" color="primary">保存来源</v-btn>
       </v-form></v-card-text>
     </v-card></v-dialog>

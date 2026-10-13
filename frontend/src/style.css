@@ -77,6 +77,7 @@ td { padding: 16px 13px; border-bottom: 1px solid #e2e8eb; vertical-align: middl
 .settings-section { padding: 24px 0; border-bottom: 1px solid #dfe6e9; max-width: 900px; }
 .settings-section h2 { margin-bottom: 22px; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+.settings-section .form-grid + .form-grid { margin-top: 24px; }
 .toggle-row { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 20px; }
 .save-row { padding: 22px 0; }
 .password-list { margin-top: 20px; }
