@@ -68,6 +68,17 @@ const sourceOpen = ref(false)
 const editingSource = ref<any>(null)
 const mappingOpen = ref(false)
 const settings = ref<any>({})
+const savedPasswords = ref<string[]>([])
+async function refreshPasswords() {
+  settings.value = await api('/api/v1/settings')
+  savedPasswords.value = (await api('/api/v1/passwords')).items
+}
+function registrationReason(task: any) {
+  if (task.stage !== 'registered') return ''
+  if (task.state === 'SKIPPED') return '处理规则设为忽略'
+  if (!task.policy.auto_extract) return '仅登记，未启用自动解压'
+  return '此文件未识别为可解压的压缩包'
+}
 const newPassword = ref('')
 const sources = ref<any[]>([])
 const connections = ref<any[]>([])
@@ -127,7 +138,8 @@ async function load(silent = false) {
   if (!silent) { loading.value = true; error.value = '' }
   try {
     if (view.value === 'overview') { await system.refresh(); return }
-    if (['settings', 'passwords'].includes(view.value)) { settings.value = await api('/api/v1/settings'); return }
+    if (view.value === 'passwords') { await refreshPasswords(); return }
+    if (view.value === 'settings') { savedPasswords.value = []; settings.value = await api('/api/v1/settings'); return }
     if (view.value === 'maintenance') return
     if (offlineMode.value) {
       const result = await api('/api/v1/offline')
@@ -315,7 +327,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
         <table><thead><tr><th>文件 / 来源</th><th>当前阶段</th><th>状态</th><th>大小</th><th>尝试</th><th>操作</th></tr></thead><tbody>
           <tr v-for="task in rows" :key="task.id">
             <td><button class="file-link" @click="showTask(task)"><FileArchive :size="18" /><strong>{{ task.name }}</strong></button><small>{{ stateLabel(task.source) }} · {{ date(task.created_at) }}</small></td>
-            <td>{{ stageLabel(task.stage) }}<small v-if="task.error" class="error-text">{{ textLabel(task.error) }}</small></td>
+            <td>{{ stageLabel(task.stage) }}<small v-if="registrationReason(task)">{{ registrationReason(task) }}</small><small v-if="task.error" class="error-text">{{ textLabel(task.error) }}</small></td>
             <td><span class="state-tag" :class="tone(task.state)">{{ stateLabel(task.state) }}</span><small v-if="task.output.cleanup_result === 'FAILED'" class="error-text">解压成功，清理失败</small><small v-if="task.output.flatten_result === 'FAILED'" class="error-text">解压成功，提层失败</small></td><td class="nowrap">{{ bytes(task.size) }}</td><td>{{ task.attempts }}</td>
             <td><div class="row-actions">
               <button title="详情" aria-label="任务详情" @click="showTask(task)"><Eye :size="17" /></button>
@@ -431,10 +443,10 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     <v-snackbar v-model="saveNoticeOpen" :color="saveSucceeded ? 'success' : 'error'" :timeout="6000">{{ saveFeedback }}</v-snackbar>
     <section v-if="view === 'passwords'" class="settings-section">
       <header class="section-heading"><h2>密码库</h2><span class="muted">{{ settings.password_count || 0 }} 条记录</span></header>
-      <v-form class="password-add" @submit.prevent="action('/api/passwords', { action: 'add', password: newPassword }, '压缩密码已保存').then(async ok => { if (ok) { newPassword = ''; settings = await api('/api/v1/settings') } })">
-        <v-text-field v-model="newPassword" label="新增压缩密码" type="password" autocomplete="off" />
+      <v-form class="password-add" @submit.prevent="action('/api/passwords', { action: 'add', password: newPassword }, '压缩密码已保存').then(async ok => { if (ok) { newPassword = ''; await refreshPasswords() } })">
+        <v-text-field v-model="newPassword" label="新增压缩密码" type="text" autocomplete="off" />
         <v-btn type="submit" color="primary" :disabled="loading || !newPassword">保存密码</v-btn>
-      </v-form><div class="table-wrap"><table><thead><tr><th>记录</th><th>密码</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="index in (settings.password_count || 0)" :key="index"><td><strong>密码 {{ String(index).padStart(2, '0') }}</strong></td><td class="mono">••••••••</td><td><span class="state-tag success">已保存</span></td><td><div class="row-actions"><button title="移除密码" :aria-label="'移除密码' + index" @click="confirmation = { title: '移除此密码记录？', endpoint: '/api/passwords', body: { action: 'remove', index: index - 1 } }"><Trash2 :size="16" /></button></div></td></tr></tbody></table><div v-if="!settings.password_count" class="empty"><span>暂无密码记录</span></div></div>
+      </v-form><div class="table-wrap"><table><thead><tr><th>记录</th><th>密码</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="(password, index) in savedPasswords" :key="index"><td><strong>密码 {{ String(index + 1).padStart(2, '0') }}</strong></td><td class="mono path-cell">{{ password }}</td><td><span class="state-tag success">已保存</span></td><td><div class="row-actions"><button title="移除密码" :aria-label="'移除密码' + (index + 1)" @click="confirmation = { title: '移除此密码记录？', endpoint: '/api/passwords', body: { action: 'remove', index } }"><Trash2 :size="16" /></button></div></td></tr></tbody></table><div v-if="!savedPasswords.length" class="empty"><span>暂无密码记录</span></div></div>
     </section>
   </section>
 </template>

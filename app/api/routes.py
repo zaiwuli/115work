@@ -458,6 +458,17 @@ async def set_settings(request: Request):
     return {"success": True}
 
 
+@secured.get("/api/v1/passwords")
+def list_passwords(request: Request):
+    if getattr(request.state, "role", "admin") != "admin":
+        raise HTTPException(403, detail="ADMIN_CONFIGURATION_PERMISSION")
+    return Response(
+        content=json.dumps({"items": [request.app.state.secrets.decrypt(value)
+                                    for value in request.app.state.db.settings()["passwords"]]}),
+        media_type="application/json", headers={"Cache-Control": "no-store"},
+    )
+
+
 @secured.post("/api/passwords")
 async def passwords(request: Request):
     body = await request.json()
