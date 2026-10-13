@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.adapters.p115 import AdapterError
 from app.adapters.safe_http import SafeHTTPTransport
-from app.persistence.models import Event, Job, Outbox, Schedule, Source, Task, Transfer
+from app.persistence.models import Event, Job, Offline, Outbox, Schedule, Source, Task, Transfer
 from app.scheduler.governor import RemoteGovernor
 from app.scheduler.store import JobStore, enqueue
 from app.services.archives import ArchiveService
@@ -200,7 +200,10 @@ class Engine:
             with self.db.session() as session:
                 event = session.get(Event, item.event_id)
                 task = session.get(Task, event.task_id)
-                task_name = task.name if task else ""
+                offline = session.get(Offline, event.task_id) if item.category == "offline" else None
+                task_name = task.name if task else offline.name if offline else ""
+                if offline and task_name == "Magnet":
+                    task_name = "未命名磁链"
                 if not notification_enabled(settings, event, item.category):
                     session.get(Outbox, item.id).status = "suppressed"
                     continue

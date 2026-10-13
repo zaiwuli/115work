@@ -72,7 +72,7 @@ class OfflineService:
                     "root": root, "date": date, "start": now, "ids": ids, "round": 0,
                 }))
         record(session, batch.id, "IMPORT", "offline_submit",
-               f"Queued {created}; duplicates {duplicates}; invalid {len(errors)}", "offline")
+               f"Queued {created}; duplicates {duplicates}; invalid {len(errors)}")
         return {"batch_id": batch.id, "queued": created, "duplicates": duplicates,
                 "invalid": len(errors), "message": f"Queued {created}; duplicates {duplicates}; invalid {len(errors)}"}
 
@@ -252,14 +252,22 @@ class OfflineService:
                         parents = expanded
                     children = [file for file in candidates if not file.is_dir and file.cid in parents]
                     if children:
+                        archive_count = 0
                         for file in children:
                             task = task_for_file(session, file, item.auto_extract, offline_id=item.id)
+                            if task is None:
+                                continue
                             session.add(ResourceLink(offline_id=item.id, task_id=task.id,
                                                      evidence="magnet-directory"))
-                            if item.auto_extract:
+                            from app.services.archives import is_archive
+                            if is_archive(file.name):
+                                archive_count += 1
+                            if item.auto_extract and is_archive(file.name):
                                 record(session, task.id, "CLOUD_TAKEOVER", task.stage,
                                        "离线产物已关联，云解压队列接管", "cloud")
-                        item.status, item.stage, item.error = "success", "join_review", "MAGNET_SCOPE_COMPLETENESS_REQUIRES_REVIEW"
+                        item.status = "success"
+                        item.stage = "join_review" if archive_count else "complete"
+                        item.error = "MAGNET_SCOPE_COMPLETENESS_REQUIRES_REVIEW" if archive_count else ""
                         item.next_check = None
                         continue
             scored = []
@@ -280,8 +288,15 @@ class OfflineService:
                 continue
             file = best[0]
             task = task_for_file(session, file, item.auto_extract, offline_id=item.id)
+            if task is None:
+                if item.status != "success":
+                    record(session, item.id, "SUCCESS", "complete",
+                           "离线产物已发现，非压缩包不进入解压队列", "offline")
+                item.status, item.stage, item.error, item.next_check = "success", "complete", "", None
+                continue
             session.add(ResourceLink(offline_id=item.id, task_id=task.id, evidence=str(best_score)))
-            if item.auto_extract:
+            from app.services.archives import is_archive
+            if item.auto_extract and is_archive(file.name):
                 record(session, task.id, "CLOUD_TAKEOVER", task.stage,
                        "离线完成，原包已关联并交给云解压队列", "cloud")
             if item.status != "success":

@@ -42,6 +42,12 @@ def notification_stage(event):
 def enabled(settings, event, category):
     if event.kind == "TEST":
         return True
+    if event.kind not in {
+        "SUCCEEDED", "FAILED", "WAITING_APPROVAL", "SUBMIT_FAILED",
+        "SUBMISSION_UNKNOWN", "POSTPROCESS_FAILED", "OUTPUT_CLEANUP_FAILED",
+        "OUTPUT_FLATTEN_FAILED", "RECONCILING",
+    }:
+        return False
     if not settings.get("notification_enabled", True):
         return False
     if category == "offline":

@@ -33,7 +33,22 @@ class ArchiveService:
         )
 
     def adopt(self, session, file: CloudFile, auto_extract: bool = True,
-              source_id: str = "", offline_id: str = "") -> Task:
+              source_id: str = "", offline_id: str = "") -> Task | None:
+        if not is_archive(file.name):
+            from app.persistence.models import Offline, Source
+            if not source_id and offline_id:
+                parent = session.get(Offline, offline_id)
+                sources = list(session.scalars(select(Source).where(
+                    Source.kind == "115", Source.enabled,
+                    Source.config["cid"].as_string() == parent.root_cid,
+                ))) if parent else []
+                if len(sources) == 1:
+                    source_id = sources[0].id
+            document_policy = evaluate(session, source_id, file.name, file.size)
+            if (PurePosixPath(file.name).suffix.lower() not in DOCUMENT_SUFFIXES or
+                (document_policy.get("document_action", "register") == "register"
+                 and not document_policy.get("document_links"))):
+                return None
         object_key = f"115:115-main:{file.fid}:{file.size}" + (":" + file.sha1 if file.sha1 else "")
         existing = session.scalar(select(Task).where(Task.object_key == object_key).order_by(
             Task.created_at.desc()
