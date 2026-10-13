@@ -126,6 +126,30 @@ td { padding: 16px 13px; border-bottom: 1px solid #e2e8eb; vertical-align: middl
   .overview-columns { gap: 20px; }
 }
 @media (max-width: 700px) {
+  .workspace { min-width: 0; }
+  .workspace .table-wrap { overflow: visible; }
+  .workspace table { display: block; min-width: 0; width: 100%; }
+  .workspace table thead { display: none; }
+  .workspace table tbody { display: grid; gap: 12px; }
+  .workspace table tr { display: grid; grid-template-columns: minmax(0, 1fr); padding: 14px; border: 1px solid #dfe6e9; border-radius: 6px; background: #fff; gap: 12px; }
+  .workspace table td { display: block; min-width: 0; max-width: none; padding: 0; border: 0; overflow-wrap: anywhere; white-space: normal; }
+  .workspace table td::before { content: attr(data-label); display: block; color: #697d85; font-size: 11px; margin-bottom: 5px; }
+  .workspace table td:first-child::before { display: none; }
+  .workspace table .row-actions { flex-wrap: wrap; gap: 8px; }
+  .workspace table .row-actions button { width: 44px; height: 44px; background: #edf4fb; }
+  .workspace table .file-link { white-space: normal; max-width: 100%; }
+  .workspace .section-heading { flex-wrap: wrap; gap: 10px; height: auto; min-height: 56px; }
+  .workspace .event-line, .task-evidence .event-line { flex-wrap: wrap; }
+  .workspace .event-line > *, .task-evidence .event-line > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+  .workspace .import-actions > .v-input { min-width: 0; flex-basis: 100%; }
+  .workspace .form-grid > *, .settings-section { min-width: 0; max-width: 100%; }
+  .health-list > div { flex-wrap: wrap; }
+  .health-list dd { min-width: 0; max-width: 100%; }
+  .dialog-heading h2 { min-width: 0; }
+  .dialog-heading .v-btn { flex-shrink: 0; }
+  .timeline-row > div { min-width: 0; }
+  .workspace details dl { display: grid; gap: 6px; }
+  .workspace details dd { margin-left: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   .workspace { padding: 22px 16px 40px; }
   .breadcrumb { gap: 5px; font-size: 11px; min-width: 0; white-space: nowrap; }
   .breadcrumb span, .breadcrumb > svg { display: none; }

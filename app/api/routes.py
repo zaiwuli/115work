@@ -276,11 +276,18 @@ def list_offline(request: Request, page: int = 1, page_size: int = 30):
                 linked = list(session.scalars(select(Task).join(
                     ResourceLink, ResourceLink.task_id == Task.id,
                 ).where(ResourceLink.offline_id == item.id)))
+                from app.services.archives import is_archive
+                archives = [task for task in linked if is_archive(task.name)]
+                active = [task for task in archives if task.state not in {
+                    "SUCCEEDED", "FAILED", "CANCELED", "SKIPPED",
+                }]
+                failures = [task for task in archives if task.state == "FAILED"]
+                processing = (active or failures or archives or linked)
+                pipeline_stage = processing[0].stage if processing else item.stage
                 row = serialize(item)
                 row.pop("original_link")
                 task_rows.append(row | {"kind": item.kind, "info_hash": item.hash_value,
-                                        "pipeline_status": item.stage if item.stage == "join_review" else
-                                                           linked[0].stage if linked else item.stage,
+                                        "pipeline_status": pipeline_stage,
                                         "artifact_count": len(linked),
                                         "archives": [serialize(x) for x in linked]})
             result.append(serialize(batch) | {"target_name": batch.target_date, "tasks": task_rows,

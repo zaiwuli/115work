@@ -89,7 +89,9 @@ class ArchiveService:
         matching_offline = [item for item in all_offline
             if match_name(item.name) == match_name(file.name) and
             (not item.size or item.size == file.size)]
-        if matching_offline and not all(item.auto_extract for item in matching_offline):
+        if offline_id and all_offline:
+            auto_extract = all_offline[0].auto_extract
+        elif matching_offline and not all(item.auto_extract for item in matching_offline):
             auto_extract = False
         settings = self.db.settings()
         policy = {"squash_root": True, **policy}

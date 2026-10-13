@@ -159,15 +159,15 @@ watch(() => system.refreshVersion, () => void load())
 </script>
 
 <template>
-  <section class="workspace">
+  <section v-mobile-tables class="workspace">
     <header class="page-heading"><div><div class="eyebrow">115work</div><h1>{{ view === 'connections' ? '系统设置' : titles[view] }}</h1></div>
       <div class="heading-actions"><v-btn v-if="canWrite && ['connections','rules','schedules'].includes(view)" color="primary" @click="open()"><Plus :size="17" class="mr-2" />添加</v-btn>
         </div>
     </header>
     <SettingsNav v-if="view === 'connections'" />
     <nav v-if="view === 'logs'" class="section-nav" aria-label="工作日志分页">
-      <RouterLink to="/logs?section=recent" :class="{ active: route.query.section === 'recent' }">最近事件</RouterLink>
-      <RouterLink to="/logs" :class="{ active: route.query.section !== 'recent' }">工作详情</RouterLink>
+      <RouterLink to="/logs" :class="{ active: route.query.section !== 'details' }">最近事件</RouterLink>
+      <RouterLink to="/logs?section=details" :class="{ active: route.query.section === 'details' }">工作详情</RouterLink>
     </nav>
     <p v-if="error" role="alert" class="error-text alert">{{ error }}</p>
     <p v-if="message" role="status" class="success-text alert">{{ message }}</p>
@@ -211,7 +211,7 @@ watch(() => system.refreshVersion, () => void load())
       <section class="settings-section"><h2>管理员密码</h2><div class="form-grid"><v-text-field v-model="newPassword" type="password" label="新密码" autocomplete="new-password" /><v-btn variant="outlined" :disabled="newPassword.length < 12" @click="command('/api/v1/security/password', { password: newPassword }).then(x => x && reload())"><Save :size="17" class="mr-2" />更新密码</v-btn></div></section>
     </template>
 
-    <RecentEvents v-else-if="view === 'logs' && route.query.section === 'recent'" />
+    <RecentEvents v-else-if="view === 'logs' && route.query.section !== 'details'" />
     <template v-else>
       <div class="table-wrap"><table><thead><tr><th>时间</th><th>事件 / 操作</th><th>详情</th></tr></thead><tbody>
         <tr v-for="item in items" :key="item.id"><td>{{ date(item.created_at) }}</td><td>{{ textLabel(item.kind || item.action) }}</td><td class="path-cell"><div>{{ textLabel(item.message || '') }}</div><details v-if="item.details && Object.keys(item.details).length"><summary>工作详情</summary><dl><template v-for="(value, key) in item.details" :key="key"><dt>{{ key }}</dt><dd class="path-cell">{{ typeof value === 'object' ? JSON.stringify(value, null, 2) : (String(key) === '当前状态' ? textLabel(String(value)) : String(value)) }}</dd></template></dl></details></td></tr>

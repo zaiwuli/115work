@@ -15,6 +15,7 @@ import './style.css'
 import App from './App.vue'
 import Workspace from './Workspace.vue'
 import AdminViews from './AdminViews.vue'
+import { mobileTables } from './mobileTables'
 
 const router = createRouter({
   history: createWebHashHistory(),
@@ -54,4 +55,4 @@ const vuetify = createVuetify({
   },
 })
 
-createApp(App).use(createPinia()).use(router).use(vuetify).mount('#app')
+createApp(App).directive('mobile-tables', mobileTables).use(createPinia()).use(router).use(vuetify).mount('#app')

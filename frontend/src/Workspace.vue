@@ -284,7 +284,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
 </script>
 
 <template>
-  <section class="workspace">
+  <section v-mobile-tables class="workspace">
     <header class="page-heading">
       <div><div class="eyebrow">115work</div><h1>{{ titles[view] || '运行总览' }}</h1></div>
       <div class="heading-actions">
