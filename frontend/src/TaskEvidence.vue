@@ -15,7 +15,7 @@ async function command(suffix: string, extra: any = {}) {
   error.value = ''
   try {
     await api('/api/v1/tasks/' + props.task.id + suffix, {
-      ...(suffix === '/commands' ? {} : { confirm_name: confirmName.value }),
+      ...(suffix === '/commands' ? {} : { confirm_name: suffix === '/delete-approval' ? confirmName.value : props.task.name }),
       expected_version: props.task.version, ...extra,
     })
     Object.assign(props.task, await api('/api/v1/tasks/' + props.task.id))
@@ -65,8 +65,7 @@ async function command(suffix: string, extra: any = {}) {
     <p v-if="error" role="alert" class="error-text">{{ error }}</p>
     <template v-if="task.state === 'WAITING_APPROVAL' && (task.stage === 'identity_conflict' || task.wait_reason === 'IDENTITY')">
       <h3>内容身份冲突</h3>
-      <v-text-field v-model="confirmName" label="确认原文件名" class="mt-3" />
-      <v-btn :disabled="busy || confirmName !== task.name" variant="outlined" @click="command('/commands', { action: 'approve' })"><Check :size="17" class="mr-2" />批准独立处理</v-btn>
+      <v-btn :disabled="busy" variant="outlined" @click="command('/commands', { action: 'approve' })"><Check :size="17" class="mr-2" />批准独立处理</v-btn>
     </template>
     <template v-if="task.state === 'RECONCILING' && task.stage === 'cloud_export_unknown'">
       <h3>核对云解压操作</h3>
@@ -74,14 +73,13 @@ async function command(suffix: string, extra: any = {}) {
     </template>
     <template v-if="task.source === '115' && task.state === 'WAITING_APPROVAL' && task.stage === 'local_fallback'">
       <h3>本地解压确认</h3>
-      <v-text-field v-model="confirmName" label="确认原文件名" class="mt-3" />
-      <v-btn :disabled="busy || confirmName !== task.name || !task.locator?.pickcode" @click="command('/commands', { action: 'approve' })"><Download :size="17" class="mr-2" />确认缓存并本地解压</v-btn>
-      <v-btn v-if="task.output.failure_archive_result === 'FAILED'" class="ml-3" :disabled="busy || confirmName !== task.name" @click="command('/failure-archive/reconcile')"><Check :size="17" class="mr-2" />核对失败归档</v-btn>
+      <v-btn :disabled="busy || !task.locator?.pickcode" @click="command('/commands', { action: 'approve' })"><Download :size="17" class="mr-2" />下载原包并本地解压</v-btn>
+      <v-btn v-if="task.output.failure_archive_result === 'FAILED'" class="ml-3" :disabled="busy" @click="command('/failure-archive/reconcile')"><Check :size="17" class="mr-2" />核对失败归档</v-btn>
     </template>
     <template v-if="['SUCCEEDED','FAILED','CANCELED','SKIPPED'].includes(task.state)">
-      <h3>处理代次</h3>
-      <v-text-field v-model="confirmName" label="确认原文件名" class="mt-3" />
-      <div class="import-actions"><v-btn :disabled="busy || confirmName !== task.name" variant="outlined" @click="command('/reprocess')"><RotateCcw :size="17" class="mr-2" />重新处理</v-btn>
+      <h3>处理操作</h3>
+      <div class="import-actions"><v-btn :disabled="busy" variant="outlined" @click="task.state === 'FAILED' ? command('/commands', { action: 'retry' }) : command('/reprocess')"><RotateCcw :size="17" class="mr-2" />{{ task.state === 'FAILED' ? '重试解压' : '重新处理' }}</v-btn>
+        <v-text-field v-if="task.state === 'SUCCEEDED' && task.source !== 'legacy'" v-model="confirmName" label="删除原包前确认文件名" />
         <v-btn v-if="task.state === 'SUCCEEDED' && task.source !== 'legacy'" :disabled="busy || confirmName !== task.name" color="error" variant="outlined" @click="command('/delete-approval')"><Trash2 :size="17" class="mr-2" />批准延迟删除原包</v-btn></div>
     </template>
   </section>
