@@ -368,6 +368,8 @@ class ArchiveService:
                     current = session.get(Task, task_id)
                     current.remote_id = remote_id
                     transition(session, current, "WAITING_EXTERNAL", "cloud_progress")
+                    record(session, task_id, "RUNNING", "cloud_progress",
+                           "云端开始解压", "cloud")
                     operation = session.get(Operation, key)
                     operation.status, operation.evidence = "ACCEPTED", {"remote_id": remote_id}
                 return time.time() + 15

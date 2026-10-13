@@ -398,7 +398,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
         <v-switch v-model="settings.notification_enabled" label="启用通知" color="primary" hide-details />
         <v-select v-model="settings.notification_provider" label="通知方式" :items="[{ title: 'MS 通知', value: 'ms' }, { title: '常规 Webhook', value: 'webhook' }]" />
         <div class="toggle-row"><v-switch v-model="settings.notification_offline" label="离线通知" color="primary" hide-details /><v-switch v-model="settings.notification_cloud" label="云解压通知" color="primary" hide-details /><v-switch v-model="settings.notification_local" label="本地处理通知" color="primary" hide-details /></div>
-        <div class="toggle-row"><v-checkbox v-for="stage in [{ key: 'discovery', title: '发现' }, { key: 'cache', title: '缓存' }, { key: 'extract', title: '解压' }, { key: 'complete', title: '完成' }, { key: 'cleanup', title: '清理' }]" :key="stage.key" v-model="settings['notification_' + stage.key]" :label="stage.title" hide-details /></div>
+        <div class="toggle-row"><v-checkbox v-for="stage in [{ key: 'discovery', title: '发现压缩包' }, { key: 'cache', title: '开始缓存' }, { key: 'extract', title: '开始解压' }, { key: 'complete', title: '完成 / 离线结果' }, { key: 'cleanup', title: '原包处理完成' }]" :key="stage.key" v-model="settings['notification_' + stage.key]" :label="stage.title" hide-details /></div>
         <v-text-field v-model="settings.notification_webhook" label="通知服务地址" />
         <v-text-field v-if="settings.notification_provider === 'ms'" v-model="notificationKey" type="password" autocomplete="new-password" :label="settings.notification_api_key_configured ? 'MS 通知密钥（已配置）' : 'MS 通知密钥'" />
         <v-textarea v-model="settings.notification_template" label="通知模板" rows="5" placeholder="留空使用原工具默认模板" />

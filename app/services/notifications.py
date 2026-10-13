@@ -28,6 +28,12 @@ def normalize_ms_url(raw):
 
 
 def notification_stage(event):
+    if event.kind in {"FAILED", "SUBMIT_FAILED", "SUBMISSION_UNKNOWN",
+                      "POSTPROCESS_FAILED", "OUTPUT_CLEANUP_FAILED",
+                      "OUTPUT_FLATTEN_FAILED", "WAITING_APPROVAL", "RECONCILING"}:
+        return "attention"
+    if event.kind in {"SUBMITTED", "SUCCESS", "SUCCEEDED"}:
+        return "complete"
     if event.kind == "DISCOVERED":
         return "discovery"
     if any(part in event.stage for part in ("cleanup", "postprocess", "delete", "retention")):
@@ -39,18 +45,29 @@ def notification_stage(event):
     return "extract"
 
 
+def notification_group(event):
+    if event.kind == "TEST":
+        return "test"
+    group = notification_stage(event)
+    if group == "attention":
+        return "attention:" + event.kind + ":" + event.stage
+    if event.kind == "DISCOVERED":
+        return "discovery"
+    if event.kind in {"SUBMITTED", "SUCCESS", "SUCCEEDED", "POSTPROCESS_SUCCEEDED"}:
+        return event.kind.lower()
+    if event.kind == "RUNNING" and event.stage in {"cache", "local_extract", "cloud_progress"}:
+        return group
+    return ""
+
+
 def enabled(settings, event, category):
     if event.kind == "TEST":
         return True
-    if event.kind not in {
-        "SUCCEEDED", "FAILED", "WAITING_APPROVAL", "SUBMIT_FAILED",
-        "SUBMISSION_UNKNOWN", "POSTPROCESS_FAILED", "OUTPUT_CLEANUP_FAILED",
-        "OUTPUT_FLATTEN_FAILED", "RECONCILING",
-    }:
+    if not notification_group(event):
         return False
     if not settings.get("notification_enabled", True):
         return False
-    if category == "offline":
+    if notification_stage(event) == "attention":
         return settings.get("notification_" + category, True)
     return settings.get("notification_" + category, True) and settings.get(
         "notification_" + notification_stage(event), True,
@@ -65,6 +82,8 @@ def ms_payload(settings, event, category, task_name):
     titles["CLOUD_TAKEOVER"] = "云解压已接管"
     stage = getattr(event, "stage", "")
     title = titles.get(event.kind, STAGE_TITLES.get(stage, "任务状态更新"))
+    if event.kind == "TEST" and stage == "notification_flow_test":
+        title = event.message
     if event.kind not in titles and event.message and not re.fullmatch(r"[A-Za-z0-9_ :.-]+", event.message):
         title = event.message
     values = {

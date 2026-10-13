@@ -723,6 +723,27 @@ def test_notification(request: Request):
     return {"success": True}
 
 
+@secured.post("/api/notification/test-flow", status_code=202)
+def test_notification_flow(request: Request):
+    identifiers = []
+    stages = [
+        ("离线任务已提交", "offline"),
+        ("离线任务完成", "offline"),
+        ("发现压缩包", "cloud"),
+        ("开始解压", "cloud"),
+        ("原包处理完成", "cloud"),
+        ("解压完成", "cloud"),
+    ]
+    with request.app.state.db.session() as session:
+        for index, (title, category) in enumerate(stages, 1):
+            event = record(session, "notification-flow-test", "TEST", "notification_flow_test",
+                           f"【模拟测试 {index}/{len(stages)}】{title} · 测试压缩包.zip", category)
+            identifiers.append(event.id)
+        enqueue(session, "outbox", "notifications", {})
+    request.app.state.engine.wake.set()
+    return {"success": True, "event_ids": identifiers}
+
+
 @secured.post("/api/tasks/system")
 async def task_system(request: Request):
     action = (await request.json()).get("action")
