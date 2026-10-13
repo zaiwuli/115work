@@ -73,12 +73,6 @@ async function refreshPasswords() {
   settings.value = await api('/api/v1/settings')
   savedPasswords.value = (await api('/api/v1/passwords')).items
 }
-function registrationReason(task: any) {
-  if (task.stage !== 'registered') return ''
-  if (task.state === 'SKIPPED') return '处理规则设为忽略'
-  if (!task.policy.auto_extract) return '仅登记，未启用自动解压'
-  return '此文件未识别为可解压的压缩包'
-}
 const newPassword = ref('')
 const sources = ref<any[]>([])
 const connections = ref<any[]>([])
@@ -327,7 +321,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
         <table><thead><tr><th>文件 / 来源</th><th>当前阶段</th><th>状态</th><th>大小</th><th>尝试</th><th>操作</th></tr></thead><tbody>
           <tr v-for="task in rows" :key="task.id">
             <td><button class="file-link" @click="showTask(task)"><FileArchive :size="18" /><strong>{{ task.name }}</strong></button><small>{{ stateLabel(task.source) }} · {{ date(task.created_at) }}</small></td>
-            <td>{{ stageLabel(task.stage) }}<small v-if="registrationReason(task)">{{ registrationReason(task) }}</small><small v-if="task.error" class="error-text">{{ textLabel(task.error) }}</small></td>
+            <td>{{ stageLabel(task.stage) }}<small v-if="task.error" class="error-text">{{ textLabel(task.error) }}</small></td>
             <td><span class="state-tag" :class="tone(task.state)">{{ stateLabel(task.state) }}</span><small v-if="task.output.cleanup_result === 'FAILED'" class="error-text">解压成功，清理失败</small><small v-if="task.output.flatten_result === 'FAILED'" class="error-text">解压成功，提层失败</small></td><td class="nowrap">{{ bytes(task.size) }}</td><td>{{ task.attempts }}</td>
             <td><div class="row-actions">
               <button title="详情" aria-label="任务详情" @click="showTask(task)"><Eye :size="17" /></button>
