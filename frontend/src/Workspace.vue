@@ -233,7 +233,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       <div><div class="eyebrow">115work</div><h1>{{ titles[view] || '运行总览' }}</h1></div>
       <div class="heading-actions">
         <v-btn v-if="view === 'sources' && canWrite" color="primary" @click="openSource()"><Plus :size="17" class="mr-2" />添加来源</v-btn>
-        <v-btn v-if="offlineMode" variant="outlined" :disabled="loading" @click="action('/api/115/offline/refresh')"><RefreshCw :size="16" class="mr-2" />查询离线</v-btn>
+        <v-btn v-if="view === 'tasks'" variant="outlined" :disabled="loading" @click="action('/api/115/offline/refresh')"><RefreshCw :size="16" class="mr-2" />查询离线</v-btn>
         <v-btn v-if="canWrite && view === 'tasks'" variant="outlined" :disabled="loading" @click="action('/api/v1/system/refresh')"><RefreshCw :size="16" class="mr-2" />手动扫描</v-btn>
         <v-btn v-if="canWrite && view === 'tasks'" variant="outlined" :disabled="loading" @click="action('/api/v1/cloud/monitor/check', {}, '已加入生活事件检查队列')"><Activity :size="16" class="mr-2" />检查生活事件</v-btn>
         <v-btn icon variant="text" title="刷新页面" aria-label="刷新页面" @click="load"><RefreshCw :size="18" /></v-btn>
@@ -241,7 +241,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     </header>
     <p v-if="error" class="error-text alert" role="alert">{{ error }}</p>
     <p v-if="message" class="success-text alert" role="status">{{ message }}</p>
-    <v-progress-linear v-if="loading" indeterminate color="primary" height="2" />
+    <div class="loading-slot"><v-progress-linear :style="{ visibility: loading ? 'visible' : 'hidden' }" :indeterminate="loading" color="primary" height="2" /></div>
     <nav v-if="view === 'tasks'" class="section-nav" aria-label="任务类型">
       <RouterLink to="/tasks" :class="{ active: !offlineMode }">解压任务</RouterLink>
       <RouterLink to="/tasks?type=offline" :class="{ active: offlineMode }">离线任务</RouterLink>
@@ -261,6 +261,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
 
     <template v-if="(view === 'tasks' && !offlineMode) || view === 'history'">
       <div class="filter-bar"><Search :size="18" class="muted" /><v-text-field v-model="search" label="搜索文件名" class="search-field" /><v-select v-model="stateFilter" :items="stateOptions" label="状态" class="filter-select" /></div>
+      <header class="section-heading task-list-heading"><h2>解压任务</h2></header>
       <div class="table-wrap">
         <table><thead><tr><th>文件 / 来源</th><th>当前阶段</th><th>状态</th><th>大小</th><th>尝试</th><th>操作</th></tr></thead><tbody>
           <tr v-for="task in rows" :key="task.id">
@@ -301,7 +302,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     </template>
     <template v-else-if="offlineMode">
       <div class="filter-bar"><Search :size="18" class="muted" /><v-text-field v-model="search" label="搜索文件名" class="search-field" /><v-select v-model="stateFilter" :items="offlineStateOptions" label="状态" class="filter-select" /></div>
-      <header class="section-heading"><h2>离线记录</h2><v-btn variant="text" :disabled="loading" @click="confirmation = { title: '重试全部明确失败的离线任务？', endpoint: '/api/115/offline/retry-all', body: {} }"><RotateCcw :size="16" class="mr-2" />重试失败项</v-btn></header>
+      <header class="section-heading task-list-heading"><h2>离线记录</h2><v-btn variant="text" :disabled="loading" @click="confirmation = { title: '重试全部明确失败的离线任务？', endpoint: '/api/115/offline/retry-all', body: {} }"><RotateCcw :size="16" class="mr-2" />重试失败项</v-btn></header>
       <div class="table-wrap"><table><thead><tr><th>文件</th><th>日期 / 实际 CID</th><th>离线状态</th><th>处理阶段</th><th>操作</th></tr></thead><tbody>
         <tr v-for="task in offlineItems" :key="task.id + task.import_date">
           <td><strong>{{ task.name }}</strong><small>{{ task.kind.toUpperCase() }} · {{ bytes(task.size) }}</small><small class="mono">{{ task.hash_value }}</small></td>
