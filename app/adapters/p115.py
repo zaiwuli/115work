@@ -297,7 +297,8 @@ class P115Adapter:
                     if file.is_dir:
                         queue.append((file.fid, relative))
                     else:
-                        result.append({"path": relative, "size": file.size})
+                        result.append({"path": relative, "size": file.size,
+                                       "fid": file.fid, "cid": parent, "sha1": file.sha1})
                     if len(result) + len(queue) > 10000:
                         raise AdapterError("OUTPUT_MANIFEST_BUDGET")
                 if page.next_offset is None:

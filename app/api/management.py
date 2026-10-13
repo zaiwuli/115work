@@ -44,7 +44,16 @@ def validate_rule(config):
     allowed = {"pattern", "extensions", "min_size", "max_size", "workflow", "original_action",
                "document_action", "document_links", "auto_fallback", "archive_cid", "archive_path",
                "exclude", "output_date", "cloud_failed_cid", "disable_recursion",
-               "recurse_iso", "squash_root", "extract_isos"}
+               "recurse_iso", "squash_root", "extract_isos",
+               "cleanup_enabled", "cleanup_suffixes", "cleanup_recursive"}
+    from app.services.output_cleanup import suffixes
+    if "cleanup_suffixes" in config:
+        config["cleanup_suffixes"] = suffixes(config["cleanup_suffixes"])
+    if config.get("cleanup_enabled") and not config.get("cleanup_suffixes"):
+        raise ValueError("INVALID_CLEANUP_SUFFIXES")
+    for key in ("cleanup_enabled", "cleanup_recursive"):
+        if key in config and type(config[key]) is not bool:
+            raise ValueError("INVALID_RULE_BOOLEAN")
     if set(config) - allowed:
         raise ValueError("UNKNOWN_RULE_SETTING")
     if config.get("original_action", "retain") not in {"retain", "archive", "delete"}:

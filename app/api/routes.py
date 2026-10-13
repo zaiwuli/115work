@@ -418,6 +418,8 @@ async def set_settings(request: Request):
     if set(body) - allowed:
         raise HTTPException(422, detail="UNKNOWN_OR_SECRET_SETTINGS")
     for key, value in body.items():
+        if key == "local_extract_concurrency" and (type(value) is not int or not 1 <= value <= 4):
+            raise HTTPException(422, detail="INVALID_LOCAL_CONCURRENCY")
         if key.endswith("_seconds") and (type(value) is not int or value < 15 or value > 86400):
             raise HTTPException(422, detail="INVALID_INTERVAL")
         if key.endswith("_cid") and (not isinstance(value, str) or (

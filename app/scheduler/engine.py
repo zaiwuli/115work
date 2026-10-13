@@ -279,8 +279,11 @@ class Engine:
                 if active_jobs:
                     kinds.append("cloud_extract")
             busy = {j.kind for j, _ in self.running_jobs.values()}
-            kinds = [kind for kind in kinds if kind not in busy]
-            if len(self.running_jobs) >= 4:
+            local_count = sum(j.kind == "local_extract" for j, _ in self.running_jobs.values())
+            local_limit = self.db.settings().get("local_extract_concurrency", 1)
+            kinds = [kind for kind in kinds if
+                     (local_count < local_limit if kind == "local_extract" else kind not in busy)]
+            if len(self.running_jobs) >= 3 + local_limit:
                 kinds = []
             job = self.store.claim(time.time(), kinds, active_jobs if paused else None)
             if job:

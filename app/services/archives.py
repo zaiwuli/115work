@@ -410,7 +410,9 @@ class ArchiveService:
                     session.merge(Settings(key="cloud_cooldown", value={
                         "value": time.time() + settings["cloud_cooldown_seconds"],
                     }))
-                    if not current.cancel_requested and current.policy.get("original_action", "retain") != "retain":
+                    if not current.cancel_requested and (current.policy.get("original_action", "retain") != "retain"
+                                                         or current.policy.get("cleanup_enabled")
+                                                         or current.policy.get("squash_root", True)):
                         enqueue(session, "postprocess:" + task_id, "postprocess", {"task_id": task_id})
                 return None
         except AdapterError as exc:

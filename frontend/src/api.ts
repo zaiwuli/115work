@@ -62,6 +62,7 @@ export function errorLabel(value: string) {
     SOURCE_SCAN_BUSY: '该目录正在扫描或等待核对，请稍后删除来源。',
     SOURCE_NOT_FOUND: '此来源已不存在，请刷新页面。',
     PREVIEW_READ_ONLY: '模拟预览为只读，不执行真实操作。',
+    INVALID_CLEANUP_SUFFIXES: '请填写有效后缀，例如 .url、.lnk；不支持通配符。',
     REQUEST_FAILED: '请求未成功，请检查后台是否正常运行。',
     CLOUD_ROOT_REQUIRED: '请先在系统设置中初始化115云根目录。',
     CLOUD_CONFIGURATION_BUSY: '当前有任务执行，请稍后初始化云目录。',
@@ -88,6 +89,7 @@ export const stageNames: Record<string, string> = {
   legacy_reconcile: '旧记录待核对',
   identity_conflict: '内容身份冲突', failure_archive: '失败原包归档',
   cloud_monitor: '生活事件监测',
+  output_cleanup: '清理解压产物',
   discover_review: '文件发现待核对', join_review: '多个产物范围待核对',
 }
 export function stateLabel(value: string) { return stateNames[value] || (/^[a-z_]+$/i.test(value || '') ? '状态待核对' : value) }

@@ -97,6 +97,9 @@ td { padding: 16px 13px; border-bottom: 1px solid #e2e8eb; vertical-align: middl
 .toggle-row { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 20px; }
 .save-row { padding: 22px 0; }
 .password-list { margin-top: 20px; }
+.password-add { display: flex; align-items: flex-start; gap: 16px; max-width: 640px; margin: 20px 0; }
+.password-add .v-input { min-width: 0; flex: 1; }
+@media (max-width: 600px) { .password-add { flex-direction: column; } .password-add .v-input { width: 100%; } }
 .password-list > div { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e0e6e9; font-size: 12px; }
 .maintenance-list { max-width: 1000px; }
 .maintenance-list > div { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 28px 0; border-bottom: 1px solid #dfe6e9; }

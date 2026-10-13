@@ -28,8 +28,13 @@ def transition(session, task, state: str, stage: str, *, error: str = "", manual
     track_step(session, task, prior_stage, state, stage, error)
     if state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
         task.completed_at = time.time()
-    record(session, task.id, state, stage, error or stage,
-           "cloud" if task.source == "115" else "local")
+    category = "cloud" if task.source == "115" else "local"
+    if state == "SUCCEEDED" and (task.policy.get("cleanup_enabled") or (
+        task.source == "115" and task.policy.get("squash_root", True)
+        and task.output.get("verification") == "remote_manifest"
+    )):
+        category = ""
+    record(session, task.id, state, stage, error or stage, category)
 
 
 def track_step(session, task, prior_stage, state, stage, error=""):

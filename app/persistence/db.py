@@ -9,6 +9,7 @@ from app.persistence.models import Settings
 
 DEFAULT_SETTINGS = {
     "paused": False,
+    "local_extract_concurrency": 1,
     "cloud_root_cid": "",
     "cloud_archive_cid": "",
     "cloud_failed_cid": "",

@@ -229,7 +229,7 @@ async function saveSettings() {
   saveFeedback.value = ''
   error.value = ''
   const values: any = {}
-  for (const key of ['life_monitor_enabled', 'cloud_extract_by_date', 'cloud_retry_seconds',
+  for (const key of ['local_extract_concurrency', 'life_monitor_enabled', 'cloud_extract_by_date', 'cloud_retry_seconds',
     'cloud_cooldown_seconds', 'offline_fallback_seconds', 'notification_offline',
     'notification_cloud', 'notification_local', 'notification_webhook',
     'notification_enabled', 'notification_provider', 'notification_template',
@@ -316,14 +316,14 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
           <tr v-for="task in rows" :key="task.id">
             <td><button class="file-link" @click="showTask(task)"><FileArchive :size="18" /><strong>{{ task.name }}</strong></button><small>{{ stateLabel(task.source) }} · {{ date(task.created_at) }}</small></td>
             <td>{{ stageLabel(task.stage) }}<small v-if="task.error" class="error-text">{{ textLabel(task.error) }}</small></td>
-            <td><span class="state-tag" :class="tone(task.state)">{{ stateLabel(task.state) }}</span></td><td class="nowrap">{{ bytes(task.size) }}</td><td>{{ task.attempts }}</td>
+            <td><span class="state-tag" :class="tone(task.state)">{{ stateLabel(task.state) }}</span><small v-if="task.output.cleanup_result === 'FAILED'" class="error-text">解压成功，清理失败</small><small v-if="task.output.flatten_result === 'FAILED'" class="error-text">解压成功，提层失败</small></td><td class="nowrap">{{ bytes(task.size) }}</td><td>{{ task.attempts }}</td>
             <td><div class="row-actions">
               <button title="详情" aria-label="任务详情" @click="showTask(task)"><Eye :size="17" /></button>
               <template v-if="canWrite">
               <button v-if="task.state === 'FAILED'" title="重试" aria-label="重试任务" @click="action('/api/v1/tasks/' + task.id + '/commands', { action: 'retry' })"><RotateCcw :size="17" /></button>
               <button v-if="task.stage === 'cloud_password'" title="重试密码" aria-label="重试密码" @click="action('/api/v1/tasks/' + task.id + '/commands', { action: 'approve' })"><CheckCircle2 :size="17" /></button>
               <button v-if="task.stage === 'local_fallback' && task.state === 'WAITING_APPROVAL'" title="批准本地兜底" aria-label="批准本地兜底" @click="confirmation = { title: '批准下载原包并进行本地解压？', endpoint: '/api/v1/tasks/' + task.id + '/commands', body: { action: 'approve', expected_version: task.version } }"><Download :size="17" /></button>
-              <button v-if="task.output.postprocess_result === 'FAILED'" title="重试后处理" aria-label="重试后处理" @click="action('/api/v1/tasks/' + task.id + '/postprocess/retry')"><RotateCcw :size="17" /></button>
+              <button v-if="task.output.postprocess_result === 'FAILED'" :title="task.output.cleanup_result === 'FAILED' ? '重试清理' : '重试后处理'" aria-label="重试后处理" @click="action('/api/v1/tasks/' + task.id + '/postprocess/retry')"><RotateCcw :size="17" /></button>
               <button v-if="!['SUCCEEDED', 'FAILED', 'CANCELED', 'SKIPPED'].includes(task.state)" title="请求取消" aria-label="请求取消任务" @click="confirmation = { title: '请求取消此任务？', endpoint: '/api/v1/tasks/' + task.id + '/commands', body: { action: 'cancel' } }"><X :size="17" /></button>
               <button v-if="['SUCCEEDED', 'FAILED', 'CANCELED', 'SKIPPED'].includes(task.state)" title="删除任务" aria-label="删除任务记录" @click="confirmation = { title: '彻底删除此任务及去重记录？原包和解压结果保留，下次发现可能重新解压。', endpoint: '/api/v1/tasks/' + task.id, method: 'DELETE' }"><Trash2 :size="17" /></button>
               </template>
@@ -387,7 +387,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       <section v-if="settingsSection === 'status'" class="settings-section"><h2>界面刷新</h2><v-switch :model-value="system.autoRefresh" label="自动刷新页面数据" color="primary" hide-details @update:model-value="system.setAutoRefresh(!!$event)" /></section>
       <section v-if="settingsSection === 'cloud'" class="settings-section"><h2>115 云根目录</h2><div class="form-grid"><v-text-field v-model="settings.cloud_root_cid" label="根目录 CID" /><v-btn :disabled="loading || !settings.cloud_root_cid" color="primary" @click="action('/api/v1/cloud/root', { cid: settings.cloud_root_cid }, '云目录已初始化')"><FolderOpen :size="17" class="mr-2" />初始化目录</v-btn></div><div class="form-grid"><v-text-field :model-value="settings.offline_root_cid" label="离线目录 CID" readonly /><v-text-field :model-value="settings.cloud_output_cid" label="解压目录 CID" readonly /><v-text-field :model-value="settings.cloud_archive_cid" label="归档目录 CID" readonly /><v-text-field :model-value="settings.cloud_failed_cid" label="失败目录 CID" readonly /></div><v-switch v-model="settings.cloud_extract_by_date" label="云解压输出按日期建目录" color="primary" hide-details /></section>
       <section v-if="settingsSection === 'cloud'" class="settings-section"><h2>云目录监测</h2><div class="import-actions"><v-switch v-model="settings.life_monitor_enabled" label="启用生活事件监测（每30分钟）" color="primary" hide-details /><v-btn variant="outlined" to="/sources"><FolderOpen :size="17" class="mr-2" />监测目录管理</v-btn></div></section>
-      <section v-if="settingsSection === 'scheduler'" class="settings-section"><h2>调度节奏</h2><div class="form-grid"><v-text-field v-model.number="settings.cloud_retry_seconds" type="number" min="15" label="云解压重试间隔 / 秒" /><v-text-field v-model.number="settings.cloud_cooldown_seconds" type="number" min="15" label="成功冷却 / 秒" /><v-text-field v-model.number="settings.offline_fallback_seconds" type="number" min="15" label="离线兜底查询 / 秒" /></div></section>
+      <section v-if="settingsSection === 'scheduler'" class="settings-section"><h2>调度节奏</h2><div class="form-grid"><v-select v-model="settings.local_extract_concurrency" :items="[1, 2, 3, 4]" label="本地同时解压数量" /><v-text-field v-model.number="settings.cloud_retry_seconds" type="number" min="15" label="云解压重试间隔 / 秒" /><v-text-field v-model.number="settings.cloud_cooldown_seconds" type="number" min="15" label="成功冷却 / 秒" /><v-text-field v-model.number="settings.offline_fallback_seconds" type="number" min="15" label="离线兜底查询 / 秒" /></div></section>
       <section v-if="settingsSection === 'notifications'" class="settings-section notification-form"><h2>通知</h2>
         <v-switch v-model="settings.notification_enabled" label="启用通知" color="primary" hide-details />
         <v-select v-model="settings.notification_provider" label="通知方式" :items="[{ title: 'MS 通知', value: 'ms' }, { title: '常规 Webhook', value: 'webhook' }]" />
@@ -430,11 +430,11 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     <v-dialog :model-value="!!confirmation" max-width="480" @update:model-value="!$event && (confirmation = null)"><v-card><v-card-title class="confirmation-title">{{ confirmation?.title }}</v-card-title><v-card-actions><v-spacer /><v-btn variant="text" @click="confirmation = null">返回</v-btn><v-btn color="error" @click="confirm">确认操作</v-btn></v-card-actions></v-card></v-dialog>
     <v-snackbar v-model="saveNoticeOpen" :color="saveSucceeded ? 'success' : 'error'" :timeout="6000">{{ saveFeedback }}</v-snackbar>
     <section v-if="view === 'passwords'" class="settings-section">
-      <h2>已保存 {{ settings.password_count || 0 }} 个密码</h2>
-      <v-form class="dialog-form" @submit.prevent="action('/api/passwords', { action: 'add', password: newPassword }, '压缩密码已保存').then(async ok => { if (ok) { newPassword = ''; settings = await api('/api/v1/settings') } })">
+      <header class="section-heading"><h2>密码库</h2><span class="muted">{{ settings.password_count || 0 }} 条记录</span></header>
+      <v-form class="password-add" @submit.prevent="action('/api/passwords', { action: 'add', password: newPassword }, '压缩密码已保存').then(async ok => { if (ok) { newPassword = ''; settings = await api('/api/v1/settings') } })">
         <v-text-field v-model="newPassword" label="新增压缩密码" type="password" autocomplete="off" />
         <v-btn type="submit" color="primary" :disabled="loading || !newPassword">保存密码</v-btn>
-      </v-form><div class="password-list"><div v-for="index in (settings.password_count || 0)" :key="index"><span>密码 {{ index }} · ********</span><button title="移除密码" :aria-label="'移除密码' + index" @click="action('/api/passwords', { action: 'remove', index: index - 1 }, '密码已移除').then(async ok => { if (ok) settings = await api('/api/v1/settings') })"><Trash2 :size="16" /></button></div></div>
+      </v-form><div class="table-wrap"><table><thead><tr><th>记录</th><th>密码</th><th>状态</th><th>操作</th></tr></thead><tbody><tr v-for="index in (settings.password_count || 0)" :key="index"><td><strong>密码 {{ String(index).padStart(2, '0') }}</strong></td><td class="mono">••••••••</td><td><span class="state-tag success">已保存</span></td><td><div class="row-actions"><button title="移除密码" :aria-label="'移除密码' + index" @click="confirmation = { title: '移除此密码记录？', endpoint: '/api/passwords', body: { action: 'remove', index: index - 1 } }"><Trash2 :size="16" /></button></div></td></tr></tbody></table><div v-if="!settings.password_count" class="empty"><span>暂无密码记录</span></div></div>
     </section>
   </section>
 </template>

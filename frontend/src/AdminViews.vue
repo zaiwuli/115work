@@ -33,6 +33,9 @@ const autoFallback = ref(false)
 const disableRecursion = ref(false)
 const recurseIso = ref(false)
 const squashRoot = ref(true)
+const cleanupEnabled = ref(false)
+const cleanupSuffixes = ref('')
+const cleanupRecursive = ref(true)
 const extractIsos = ref(true)
 const archiveCid = ref('')
 const archivePath = ref('')
@@ -89,6 +92,9 @@ function open(item?: any) {
   disableRecursion.value = item?.config.disable_recursion ?? false
   recurseIso.value = item?.config.recurse_iso ?? false
   squashRoot.value = item?.config.squash_root ?? true
+  cleanupEnabled.value = item?.config.cleanup_enabled ?? false
+  cleanupSuffixes.value = (item?.config.cleanup_suffixes || []).join(', ')
+  cleanupRecursive.value = item?.config.cleanup_recursive ?? true
   extractIsos.value = item?.config.extract_isos ?? true
   archiveCid.value = item?.config.archive_cid || ''
   archivePath.value = item?.config.archive_path || ''
@@ -112,6 +118,9 @@ async function save() {
       document_links: documentLinks.value,
       disable_recursion: disableRecursion.value, recurse_iso: recurseIso.value,
       squash_root: squashRoot.value,
+      cleanup_enabled: cleanupEnabled.value,
+      cleanup_suffixes: cleanupSuffixes.value.split(/[,，\s]+/).filter(Boolean),
+      cleanup_recursive: cleanupRecursive.value,
       extract_isos: extractIsos.value,
       ...(archiveCid.value ? { archive_cid: archiveCid.value } : {}),
       ...(archivePath.value ? { archive_path: archivePath.value } : {}),
@@ -157,8 +166,8 @@ watch(() => system.refreshVersion, () => void load())
     </header>
     <SettingsNav v-if="view === 'connections'" />
     <nav v-if="view === 'logs'" class="section-nav" aria-label="工作日志分页">
-      <RouterLink to="/logs" :class="{ active: route.query.section !== 'recent' }">工作详情</RouterLink>
       <RouterLink to="/logs?section=recent" :class="{ active: route.query.section === 'recent' }">最近事件</RouterLink>
+      <RouterLink to="/logs" :class="{ active: route.query.section !== 'recent' }">工作详情</RouterLink>
     </nav>
     <p v-if="error" role="alert" class="error-text alert">{{ error }}</p>
     <p v-if="message" role="status" class="success-text alert">{{ message }}</p>
@@ -204,8 +213,8 @@ watch(() => system.refreshVersion, () => void load())
 
     <RecentEvents v-else-if="view === 'logs' && route.query.section === 'recent'" />
     <template v-else>
-      <div class="table-wrap"><table><thead><tr><th>时间</th><th>事件 / 操作</th><th>阶段 / 对象</th><th>详情</th></tr></thead><tbody>
-        <tr v-for="item in items" :key="item.id"><td>{{ date(item.created_at) }}</td><td>{{ textLabel(item.kind || item.action) }}</td><td>{{ textLabel(item.stage || item.target) }}</td><td class="path-cell"><div>{{ textLabel(item.message || '') }}</div><details v-if="item.details && Object.keys(item.details).length"><summary>工作详情</summary><dl><template v-for="(value, key) in item.details" :key="key"><dt>{{ key }}</dt><dd class="path-cell">{{ typeof value === 'object' ? JSON.stringify(value, null, 2) : (String(key) === '当前状态' ? textLabel(String(value)) : String(value)) }}</dd></template></dl></details></td></tr>
+      <div class="table-wrap"><table><thead><tr><th>时间</th><th>事件 / 操作</th><th>详情</th></tr></thead><tbody>
+        <tr v-for="item in items" :key="item.id"><td>{{ date(item.created_at) }}</td><td>{{ textLabel(item.kind || item.action) }}</td><td class="path-cell"><div>{{ textLabel(item.message || '') }}</div><details v-if="item.details && Object.keys(item.details).length"><summary>工作详情</summary><dl><template v-for="(value, key) in item.details" :key="key"><dt>{{ key }}</dt><dd class="path-cell">{{ typeof value === 'object' ? JSON.stringify(value, null, 2) : (String(key) === '当前状态' ? textLabel(String(value)) : String(value)) }}</dd></template></dl></details></td></tr>
       </tbody></table><div v-if="!items.length" class="empty">暂无记录</div></div>
     </template>
 
@@ -219,7 +228,12 @@ watch(() => system.refreshVersion, () => void load())
             <v-select v-model="originalAction" :items="[{ title: '保留', value: 'retain' }, { title: '归档', value: 'archive' }]" label="原包策略" />
             <v-select v-model="documentAction" :items="[{ title: '只读登记', value: 'register' }, { title: '复制', value: 'copy' }, { title: '归档', value: 'archive' }]" label="普通文档" />
             <v-switch v-model="disableRecursion" label="禁止递归解压" color="primary" />
-            <v-switch v-model="squashRoot" label="展开同名根目录" color="primary" />
+            <v-switch v-model="squashRoot" label="同名文件夹提层" color="primary" />
+            <v-switch v-model="cleanupEnabled" label="解压后删除指定后缀文件" color="primary" />
+            <template v-if="cleanupEnabled">
+              <v-text-field v-model="cleanupSuffixes" label="删除后缀（例如 .url, .lnk, .nfo）" />
+              <v-switch v-model="cleanupRecursive" label="包含解压输出子目录" color="primary" />
+            </template>
           </template>
           <template v-else><v-select v-model="trigger" :items="[{ title: '固定间隔', value: 'interval' }, { title: 'Cron', value: 'cron' }]" label="触发" /><v-text-field v-if="trigger === 'interval'" v-model.number="interval" type="number" min="15" label="间隔 / 秒" /><v-text-field v-else v-model="expression" label="Cron 表达式" /><v-text-field v-model="timezone" label="时区" /></template>
         </template>

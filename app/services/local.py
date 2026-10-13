@@ -414,7 +414,7 @@ class LocalService:
                               "verification": "sha256_manifest"}
             transition(session, current, "SUCCEEDED", "complete")
             session.merge(Identity(key=task.content_key, task_id=task.id, result="success"))
-            if current.policy.get("original_action", "retain") != "retain":
+            if current.policy.get("original_action", "retain") != "retain" or current.policy.get("cleanup_enabled"):
                 enqueue(session, "postprocess:" + task.id, "postprocess", {"task_id": task.id})
         return None
 
@@ -430,7 +430,7 @@ class LocalService:
                     digest.update(chunk)
             if digest.hexdigest() != entry["sha256"]:
                 return False
-        return bool(manifest.get("files"))
+        return bool(manifest.get("files")) or manifest.get("cleanup_verified_empty", False)
 
     async def copy_cache(self, task, source: Path, job, part=None):
         part = part or {"size": task.size, "mtime_ns": task.locator["mtime_ns"]}

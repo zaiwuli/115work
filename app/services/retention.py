@@ -68,7 +68,24 @@ class RetentionService:
             if task.state != "SUCCEEDED":
                 raise ValueError("PROCESSING_SUCCESS_REQUIRED")
             action = task.policy.get("original_action", "retain")
+            if (task.policy.get("cleanup_enabled") or task.policy.get("squash_root")) and task.policy.get("rule_id"):
+                rule = session.get(Rule, task.policy["rule_id"])
+                if not rule or not rule.enabled or rule.revision != task.policy["rule_revision"]:
+                    raise ValueError("RETENTION_RULE_REVISION_CHANGED")
+        from app.services.output_cleanup import OutputCleanup
+        if task.source == "115" and not task.output.get("path") and task.policy.get("squash_root", True):
+            from app.services.cloud_flatten import flatten
+            await flatten(self.db, self.store, self.adapter, task, job)
+            with self.db.session() as session:
+                task = session.get(Task, task.id)
+        await OutputCleanup(self.db, self.store, self.adapter).run(task, job)
+        with self.db.session() as session:
+            task = session.get(Task, task.id)
             if action == "retain":
+                if (task.policy.get("cleanup_enabled") or task.output.get("flatten_result")) and task.output.get("postprocess_result") != "SUCCEEDED":
+                    task.output = task.output | {"postprocess_result": "SUCCEEDED"}
+                    record(session, task.id, "SUCCEEDED", "complete", "解压及产物清理完成",
+                           "cloud" if task.source == "115" else "local")
                 return None
             if task.policy.get("rule_id"):
                 rule = session.get(Rule, task.policy["rule_id"])
@@ -84,6 +101,8 @@ class RetentionService:
                 if verification == "sha256_manifest":
                     from app.services.local import LocalService
                     manifest = json.loads(Path(task.output["manifest"]).read_text(encoding="utf-8"))
+                    from app.services.output_cleanup import remaining_manifest
+                    manifest = remaining_manifest(manifest, task.output)
                     if not await asyncio.to_thread(LocalService.verify_manifest,
                                                    Path(task.output["path"]), manifest):
                         raise ValueError("OUTPUT_MANIFEST_MISMATCH")
@@ -117,6 +136,8 @@ class RetentionService:
             else:
                 from app.services.local import LocalService
                 manifest = json.loads(Path(task.output["manifest"]).read_text(encoding="utf-8"))
+                from app.services.output_cleanup import remaining_manifest
+                manifest = remaining_manifest(manifest, task.output)
                 if not await asyncio.to_thread(LocalService.verify_manifest,
                                                Path(task.output["path"]), manifest):
                     raise ValueError("OUTPUT_MANIFEST_MISMATCH")
@@ -169,6 +190,9 @@ class RetentionService:
                 current = session.get(Task, task.id)
                 current.output = current.output | {"postprocess_result": "SUCCEEDED"}
                 record(session, task.id, "POSTPROCESS_SUCCEEDED", "postprocess", action, "local")
+                if task.policy.get("cleanup_enabled") or current.output.get("flatten_result"):
+                    record(session, task.id, "SUCCEEDED", "complete", "解压、产物清理及原包后处理完成",
+                           "cloud" if task.source == "115" else "local")
             return None
         except Exception as exc:
             with self.db.session() as session:

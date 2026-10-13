@@ -28,6 +28,23 @@ async function command(suffix: string, extra: any = {}) {
 </script>
 
 <template>
+  <section v-if="task.output.flatten_result" class="task-evidence">
+    <h3>同名文件夹提层</h3>
+    <p :class="task.output.flatten_result === 'FAILED' ? 'error-text' : 'success-text'">{{ task.output.flatten_result === 'FAILED' ? '解压成功，提层失败' : '目录整理完成' }}</p>
+    <p v-if="task.output.flatten_error">{{ textLabel(task.output.flatten_error) }}</p>
+    <v-btn v-if="task.output.flatten_result === 'FAILED'" :disabled="busy" variant="outlined" @click="command('/postprocess/retry')"><RotateCcw :size="16" class="mr-2" />重试提层</v-btn>
+  </section>
+  <section v-if="task.output.expected_manifest?.length || task.output.actual_manifest?.length" class="task-evidence">
+    <h3>文件清单</h3>
+    <details v-if="task.output.expected_manifest?.length"><summary>预计文件（压缩包内容） · {{ task.output.expected_manifest.length }}</summary><div v-for="file in task.output.expected_manifest" :key="file.path" class="event-line"><span class="path-cell">{{ file.path }}</span><small>{{ file.size === null ? '大小未知' : bytes(file.size) }}</small></div></details>
+    <details v-if="task.output.actual_manifest?.length"><summary>实际产物 · {{ task.output.actual_manifest.length }}</summary><div v-for="file in task.output.actual_manifest" :key="file.path" class="event-line"><span class="path-cell">{{ file.path }}</span><small>{{ task.output.cleanup_deleted?.includes(file.path) ? '已清理' : bytes(file.size) }}</small></div></details>
+  </section>
+  <section v-if="task.output.cleanup_result" class="task-evidence">
+    <h3>解压产物清理</h3>
+    <p :class="task.output.cleanup_result === 'FAILED' ? 'error-text' : 'success-text'">{{ task.output.cleanup_result === 'FAILED' ? '解压成功，清理失败' : '清理完成' }}</p>
+    <dl class="health-list"><div><dt>匹配 / 已删除 / 未完成</dt><dd>{{ task.output.cleanup_matched || 0 }} / {{ task.output.cleanup_deleted?.length || 0 }} / {{ task.output.cleanup_failed || 0 }}</dd></div><div v-if="task.output.cleanup_error"><dt>原因</dt><dd>{{ task.output.cleanup_error }}</dd></div></dl>
+    <details v-if="task.output.cleanup_deleted?.length"><summary>已清理文件</summary><p v-for="path in task.output.cleanup_deleted" :key="path" class="path-cell">{{ path }}</p></details>
+  </section>
   <section v-if="task.transfer" class="task-evidence">
     <h3>缓存传输</h3>
     <v-progress-linear :model-value="task.transfer.expected_size ? task.transfer.bytes_done / task.transfer.expected_size * 100 : 0" color="primary" height="5" class="my-3" />
