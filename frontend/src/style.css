@@ -143,6 +143,28 @@ td { padding: 16px 13px; border-bottom: 1px solid #e2e8eb; vertical-align: middl
   .filter-bar { flex-wrap: wrap; gap: 10px; }
   .search-field, .filter-select { max-width: none; min-width: 140px; }
   table { min-width: 600px; }
+  .mobile-task-list { overflow: visible; }
+  .mobile-task-list table { display: block; min-width: 0; width: 100%; }
+  .mobile-task-list thead { display: none; }
+  .mobile-task-list tbody { display: grid; gap: 12px; }
+  .mobile-task-list tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 14px; border: 1px solid #dfe6e9; border-radius: 6px; background: #fff; gap: 12px; }
+  .mobile-task-list td { display: block; min-width: 0; padding: 0; border: 0; overflow-wrap: anywhere; white-space: normal; }
+  .mobile-task-list td:first-child, .mobile-task-list td:last-child { grid-column: 1 / -1; }
+  .mobile-task-list td::before { display: block; color: #697d85; font-size: 11px; margin-bottom: 5px; }
+  .mobile-task-list td:nth-child(2)::before { content: "当前阶段"; }
+  .mobile-task-list td:nth-child(3)::before { content: "状态"; }
+  .mobile-task-list td:nth-child(4)::before { content: "大小"; }
+  .mobile-task-list td:nth-child(5)::before { content: "尝试"; }
+  .mobile-task-list td:last-child::before { content: none; }
+  .mobile-task-list td:last-child { border-top: 1px solid #e3e9ec; padding-top: 10px; }
+  .mobile-task-list .file-link { width: 100%; white-space: normal; align-items: flex-start; text-align: left; }
+  .mobile-task-list .file-link strong { min-width: 0; overflow-wrap: anywhere; }
+  .mobile-task-list .file-link svg { flex-shrink: 0; margin-top: 2px; }
+  .mobile-task-list .row-actions { flex-wrap: wrap; gap: 8px; }
+  .mobile-task-list .row-actions button { width: 44px; height: 44px; background: #edf4fb; }
+  .offline-task-list td:nth-child(2)::before { content: "日期 / CID"; }
+  .offline-task-list td:nth-child(3)::before { content: "离线状态"; }
+  .offline-task-list td:nth-child(4)::before { content: "处理阶段"; }
   .import-actions { flex-wrap: wrap; gap: 10px; }
   .import-actions .v-spacer { display: none; }
   .form-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }

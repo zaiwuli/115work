@@ -317,7 +317,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     <template v-if="(view === 'tasks' && !offlineMode) || view === 'history'">
       <div class="filter-bar"><Search :size="18" class="muted" /><v-text-field v-model="search" label="搜索文件名" class="search-field" /><v-select v-model="stateFilter" :items="stateOptions" label="状态" class="filter-select" /></div>
       <header class="section-heading task-list-heading"><h2>解压任务</h2></header>
-      <div class="table-wrap">
+      <div class="table-wrap mobile-task-list">
         <table><thead><tr><th>文件 / 来源</th><th>当前阶段</th><th>状态</th><th>大小</th><th>尝试</th><th>操作</th></tr></thead><tbody>
           <tr v-for="task in rows" :key="task.id">
             <td><button class="file-link" @click="showTask(task)"><FileArchive :size="18" /><strong>{{ task.name }}</strong></button><small>{{ stateLabel(task.source) }} · {{ date(task.created_at) }}</small></td>
@@ -354,7 +354,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
     <template v-else-if="offlineMode">
       <div class="filter-bar"><Search :size="18" class="muted" /><v-text-field v-model="search" label="搜索文件名" class="search-field" /><v-select v-model="stateFilter" :items="offlineStateOptions" label="状态" class="filter-select" /></div>
       <header class="section-heading task-list-heading"><h2>离线记录</h2><v-btn variant="text" :disabled="loading" @click="confirmation = { title: '重试全部明确失败的离线任务？', endpoint: '/api/115/offline/retry-all', body: {} }"><RotateCcw :size="16" class="mr-2" />重试失败项</v-btn></header>
-      <div class="table-wrap"><table><thead><tr><th>文件</th><th>日期 / 实际 CID</th><th>离线状态</th><th>处理阶段</th><th>操作</th></tr></thead><tbody>
+      <div class="table-wrap mobile-task-list offline-task-list"><table><thead><tr><th>文件</th><th>日期 / 实际 CID</th><th>离线状态</th><th>处理阶段</th><th>操作</th></tr></thead><tbody>
         <tr v-for="task in offlineItems" :key="task.id + task.import_date">
           <td><strong>{{ task.name }}</strong><small>{{ task.kind.toUpperCase() }} · {{ bytes(task.size) }}</small><small class="mono">{{ task.hash_value }}</small></td>
           <td>{{ task.target_date }}<small class="mono">CID {{ task.target_cid || '待创建' }}</small><small v-if="task.import_date !== task.target_date">导入批次 {{ task.import_date }}</small></td>
