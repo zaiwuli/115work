@@ -6,7 +6,7 @@ import {
   VApp, VAppBar, VBtn, VCard, VCardActions, VCardText, VCardTitle, VCheckbox,
   VDialog, VExpansionPanel, VExpansionPanels, VExpansionPanelText, VForm,
   VMain, VNavigationDrawer, VProgressLinear, VSelect, VSnackbar, VSpacer,
-  VSwitch, VTextarea, VTextField,
+  VSwitch, VTextarea, VTextField, VMenu, VList, VListItem,
 } from 'vuetify/components'
 import { Ripple } from 'vuetify/directives'
 import { Square, SquareCheckBig, SquareMinus } from 'lucide-vue-next'
@@ -36,7 +36,7 @@ const vuetify = createVuetify({
     VApp, VAppBar, VBtn, VCard, VCardActions, VCardText, VCardTitle, VCheckbox,
     VDialog, VExpansionPanel, VExpansionPanels, VExpansionPanelText, VForm,
     VMain, VNavigationDrawer, VProgressLinear, VSelect, VSnackbar, VSpacer,
-    VSwitch, VTextarea, VTextField,
+    VSwitch, VTextarea, VTextField, VMenu, VList, VListItem,
   },
   directives: { Ripple },
   theme: { defaultTheme: 'light', themes: {

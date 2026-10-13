@@ -6,7 +6,6 @@ const sections = [
   { key: 'cloud', title: '云目录', to: '/settings?section=cloud' },
   { key: 'notifications', title: '通知', to: '/settings?section=notifications' },
   { key: 'scheduler', title: '调度', to: '/settings?section=scheduler' },
-  { key: 'passwords', title: '压缩包密码', to: '/settings?section=passwords' },
   { key: 'status', title: '运行状态', to: '/settings?section=status' },
 ]
 </script>

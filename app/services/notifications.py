@@ -49,7 +49,13 @@ def ms_payload(settings, event, category, task_name):
     titles["CLOUD_TAKEOVER"] = "云解压已接管"
     title = titles.get(event.kind, event.message)
     values = {
-        "icon": "!" if event.kind == "FAILED" else "+",
+        "icon": {
+            "DISCOVERED": "📦", "RUNNING": "⏱️", "SUCCEEDED": "✅",
+            "FAILED": "❌", "POSTPROCESS_SUCCEEDED": "🧹",
+            "POSTPROCESS_FAILED": "❌", "SUBMITTED": "📥",
+            "SUCCESS": "✅", "IMPORT": "📋", "TEST": "🔔",
+            "CLOUD_TAKEOVER": "☁️",
+        }.get(event.kind, "⚪"),
         "title": title, "separator": "--------------------",
         "time": datetime.fromtimestamp(event.created_at, ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d %H:%M:%S"),
         "source": {"cloud": "115 云解压", "offline": "115 离线", "local": "本地处理"}.get(category, category),

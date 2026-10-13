@@ -90,6 +90,8 @@ td { padding: 16px 13px; border-bottom: 1px solid #e2e8eb; vertical-align: middl
 .file-upload input { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
 .settings-section { padding: 24px 0; border-bottom: 1px solid #dfe6e9; max-width: 900px; }
 .settings-section h2 { margin-bottom: 22px; }
+.notification-form { display: grid; gap: 24px; }
+.notification-form h2, .notification-form .toggle-row { margin-bottom: 0; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
 .settings-section .form-grid + .form-grid { margin-top: 24px; }
 .toggle-row { display: flex; gap: 28px; flex-wrap: wrap; margin-bottom: 20px; }

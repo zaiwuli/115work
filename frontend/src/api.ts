@@ -81,7 +81,7 @@ export function errorLabel(value: string) {
 export const stageNames: Record<string, string> = {
   offline_submit: '提交离线', offline_download: '离线下载', discover: '等待发现文件',
   cloud_prepare: '等待云解压', cloud_inspect: '云解压分析', cloud_output: '准备云端输出',
-  cloud_progress: '云端导出中', cloud_verify: '云端结果校验', cloud_export_unknown: '提交结果核对',
+  cloud_progress: '云解压进行中', cloud_verify: '云端结果校验', cloud_export_unknown: '提交结果核对',
   cloud_password: '等待密码', local_fallback: '本地兜底待批准', cache: '缓存文件',
   local_extract: '本地解压', local_capability: '等待解压能力', registered: '文件登记', complete: '完成',
   document_copy: '文档处理', postprocess: '原包后处理', join: '多个关联产物',

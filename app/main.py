@@ -162,6 +162,17 @@ def create_app(config: Config | None = None, adapter=None) -> FastAPI:
     frontend = ROOT / "frontend/dist"
     if (frontend / "assets").is_dir():
         app.mount("/assets", StaticFiles(directory=frontend / "assets"), name="assets")
+    if (frontend / "icons").is_dir():
+        app.mount("/icons", StaticFiles(directory=frontend / "icons"), name="icons")
+
+    @app.get("/apple-touch-icon.png", include_in_schema=False)
+    @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+    def apple_icon():
+        return FileResponse(frontend / "apple-touch-icon.png", media_type="image/png")
+
+    @app.get("/manifest.webmanifest", include_in_schema=False)
+    def manifest():
+        return FileResponse(frontend / "manifest.webmanifest", media_type="application/manifest+json")
 
     @app.get("/")
     def index():

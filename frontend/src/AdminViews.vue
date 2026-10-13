@@ -146,13 +146,14 @@ async function browse(item: any) {
 }
 function reload() { window.location.reload() }
 watch(view, () => { items.value = []; message.value = ''; void load() }, { immediate: true })
+watch(() => system.refreshVersion, () => void load())
 </script>
 
 <template>
   <section class="workspace">
     <header class="page-heading"><div><div class="eyebrow">115work</div><h1>{{ view === 'connections' ? '系统设置' : titles[view] }}</h1></div>
       <div class="heading-actions"><v-btn v-if="canWrite && ['connections','rules','schedules'].includes(view)" color="primary" @click="open()"><Plus :size="17" class="mr-2" />添加</v-btn>
-        <v-btn icon variant="text" aria-label="刷新页面" title="刷新页面" @click="load"><RefreshCw :size="18" /></v-btn></div>
+        </div>
     </header>
     <SettingsNav v-if="view === 'connections'" />
     <nav v-if="view === 'logs'" class="section-nav" aria-label="工作日志分页">

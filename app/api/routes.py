@@ -444,7 +444,9 @@ async def set_settings(request: Request):
         if (
             parsed.scheme not in {"http", "https"}
             or parsed.username or parsed.password or parsed.fragment
-            or parsed.hostname not in request.app.state.config.allowed_webhook_hosts
+            or not parsed.hostname
+            or ((request.app.state.config.allowed_webhook_hosts or not request.app.state.config.local_no_auth)
+                and parsed.hostname not in request.app.state.config.allowed_webhook_hosts)
         ):
             raise HTTPException(422, detail="WEBHOOK_HOST_REQUIRES_EXPLICIT_ALLOWLIST")
     if body.get("life_monitor_enabled") and not request.app.state.db.settings()["life_monitor_enabled"]:

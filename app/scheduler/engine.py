@@ -215,7 +215,9 @@ class Engine:
                 webhook = normalize_ms_url(webhook) if provider == "ms" else webhook
                 parsed = urlsplit(webhook)
                 if (parsed.scheme not in {"http", "https"}
-                    or parsed.hostname not in self.config.allowed_webhook_hosts):
+                    or not parsed.hostname or parsed.username or parsed.password or parsed.fragment
+                    or ((self.config.allowed_webhook_hosts or not self.config.local_no_auth)
+                        and parsed.hostname not in self.config.allowed_webhook_hosts)):
                     raise ValueError("WEBHOOK_HOST_NOT_AUTHORIZED")
                 addresses = await asyncio.to_thread(socket.getaddrinfo, parsed.hostname,
                                                      parsed.port or (443 if parsed.scheme == "https" else 80),
@@ -235,11 +237,17 @@ class Engine:
                                ))
                     response = await client.post(webhook, json=payload, headers=headers)
                     response.raise_for_status()
-            except Exception:
+            except Exception as exc:
                 with self.db.session() as session:
                     current = session.get(Outbox, item.id)
                     current.attempts += 1
-                    current.error = "NOTIFICATION_DELIVERY_FAILED"
+                    current.error = (
+                        f"通知服务返回 HTTP {exc.response.status_code}"
+                        if isinstance(exc, httpx.HTTPStatusError) else
+                        "通知服务连接超时" if isinstance(exc, httpx.TimeoutException) else
+                        "通知地址未被允许" if isinstance(exc, ValueError) else
+                        "通知发送失败：" + type(exc).__name__
+                    )
                     current.next_run = time.time() + current.attempts
                     if current.attempts >= 3:
                         current.status = "failed"

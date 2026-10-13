@@ -3,9 +3,18 @@ import { api } from './api'
 
 export const useSystem = defineStore('system', {
   state: () => ({
-    status: null as any, error: '', busy: false, connected: false,
+    status: null as any, error: '', busy: false, connected: false, refreshVersion: 0,
+    autoRefresh: localStorage.getItem('115work-auto-refresh') !== 'false',
   }),
   actions: {
+    setAutoRefresh(value: boolean) {
+      this.autoRefresh = value
+      localStorage.setItem('115work-auto-refresh', String(value))
+    },
+    async refreshPage() {
+      await this.refresh()
+      this.refreshVersion++
+    },
     async refresh() {
       try {
         this.status = await api('/api/status')

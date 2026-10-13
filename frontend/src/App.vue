@@ -23,6 +23,7 @@ const navigation = [
   { key: 'offline', title: '离线下载', icon: Download },
   { key: 'sources', title: '来源管理', icon: FolderOpen },
   { key: 'rules', title: '处理规则', icon: GitBranch },
+  { key: 'passwords', title: '密码维护', icon: KeyRound },
   { key: 'jobs', title: '自动任务', icon: CalendarClock },
   { key: 'history', title: '处理历史', icon: History },
   { key: 'notifications', title: '通知记录', icon: Bell },
@@ -35,12 +36,19 @@ const title = computed(() => navigation.find(x => x.key === currentNavigation.va
 
 async function connect() {
   await system.refresh()
+  startAutoRefresh()
+}
+function startAutoRefresh() {
+  clearInterval(timer)
+  events?.close()
+  if (!system.autoRefresh) return
   timer = setInterval(() => void system.refresh(), 10000)
   if (!sessionStorage.getItem('115work-token')) {
     events = new EventSource('/api/v1/events')
     events.onmessage = () => void system.refresh()
   }
 }
+watch(() => system.autoRefresh, startAutoRefresh)
 async function control() {
   try { await system.command('/api/tasks/system', { action: system.status?.paused ? 'resume' : 'pause' }) }
   catch (error) { system.error = (error as Error).message }
@@ -74,7 +82,7 @@ onBeforeUnmount(() => { clearInterval(timer); events?.close() })
         <v-spacer />
         <span class="connection"><i :class="{ disconnected: !system.connected }" />{{ system.connected ? '已连接' : '连接中断' }}</span>
         <v-btn v-if="system.status?.role !== 'readonly'" icon :title="system.status?.paused ? '恢复任务' : '暂停任务'" :aria-label="system.status?.paused ? '恢复任务' : '暂停任务'" :disabled="system.busy" @click="control"><component :is="system.status?.paused ? Play : Pause" :size="18" /></v-btn>
-        <v-btn icon title="刷新状态" aria-label="刷新状态" @click="system.refresh()"><RefreshCw :size="18" /></v-btn>
+        <v-btn icon title="刷新当前页面" aria-label="刷新当前页面" @click="system.refreshPage()"><RefreshCw :size="18" /></v-btn>
       </v-app-bar>
       <v-main>
         <div v-if="system.status?.adapter === 'fake'" class="preview-banner">模拟预览 · 非真实处理结果</div>
