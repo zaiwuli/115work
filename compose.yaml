@@ -1,16 +1,14 @@
 services:
-  unpackflow:
+  115work:
     build: .
-    container_name: unpackflow
+    container_name: 115work
     restart: unless-stopped
     environment:
       TZ: Asia/Shanghai
       WORK115_DATA_DIR: /config
       WORK115_LOCAL_ROOT: /data
-      WORK115_ALLOWED_SOURCE_ROOTS: '["/volume1/CloudNAS/CloudDrive"]'
     volumes:
       - /volume4/存储空间4/解压文件夹:/data
-      - /volume1/CloudNAS/CloudDrive:/volume1/CloudNAS/CloudDrive
       - /volume1/docker/115work:/config
     ports:
       - "5656:5656"

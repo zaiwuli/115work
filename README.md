@@ -22,8 +22,8 @@ docker compose -f compose.image.yaml up -d
 本地卷必须允许容器内 UID 1000 写入。
 当前 Compose 使用群晖目录示例：`/volume1/docker/115work` 保存配置与数据库，
 `/volume4/存储空间4/解压文件夹` 自动创建监控、解压、缓存、归档和离线磁链目录。
-CloudDrive 挂载仅供可选的本地来源使用，不需要配置 CD2 接口。
-容器名称为 `unpackflow`，部署前请确认没有同名旧容器正在运行。
+Compose 不挂载 CloudDrive，也不需要 CD2 接口或缓存。
+容器名称为 `115work`，部署前请确认没有同名旧容器正在运行。
 
 ## 本机启动
 
