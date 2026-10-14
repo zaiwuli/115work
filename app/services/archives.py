@@ -277,9 +277,22 @@ class ArchiveService:
             self.store.owned(session, job)
             task = session.get(Task, task_id)
             if task.state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED", "WAITING_APPROVAL"}:
+                active = session.get(Settings, "cloud_active")
+                if active and active.value.get("value") == task_id:
+                    active.value = {"value": ""}
+                return None
+            if task.cancel_requested and not task.remote_id and task.stage in {
+                "cloud_prepare", "cloud_inspect", "cloud_password",
+            }:
+                self.stop_preparation(session, task, "CANCELED")
                 return None
             active = session.get(Settings, "cloud_active")
             active_id = active.value["value"] if active else ""
+            if active_id and active_id != task_id:
+                previous = session.get(Task, active_id)
+                if not previous or previous.state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED", "WAITING_APPROVAL"}:
+                    active_id = ""
+                    active.value = {"value": ""}
             cooldown = session.get(Settings, "cloud_cooldown")
             if active_id and active_id != task_id:
                 return time.time() + 10
@@ -414,6 +427,13 @@ class ArchiveService:
             with self.db.session() as session:
                 self.store.owned(session, job)
                 current = session.get(Task, task_id)
+                if current.stage in {"cloud_prepare", "cloud_inspect", "cloud_password"} and not current.remote_id:
+                    if current.cancel_requested:
+                        self.stop_preparation(session, current, "CANCELED")
+                        return None
+                    if exc.code == "REMOTE_REJECTED" and not exc.uncertain:
+                        self.stop_preparation(session, current, "FAILED", exc.code)
+                        return None
                 if exc.uncertain and task.stage == "cloud_output":
                     export = session.get(Operation, f"cloud-export:{operation_scope(task)}:{task.attempts}")
                     transition(session, current, "RECONCILING",
@@ -430,10 +450,26 @@ class ArchiveService:
             return time.time() + 300
         return None
 
+    def stop_preparation(self, session, task, state, error=""):
+        transition(session, task, state, task.stage, error=error)
+        task.wait_reason = ""
+        active = session.get(Settings, "cloud_active")
+        if active and active.value.get("value") == task.id:
+            active.value = {"value": ""}
+        # Preparation cannot export files; close only its journal, never export operations.
+        for operation in session.scalars(select(Operation).where(
+            Operation.task_id == task.id, Operation.kind == "cloud_prepare",
+            Operation.status.in_(["PREPARED", "UNKNOWN", "ACCEPTED"]),
+        )):
+            operation.status = "REJECTED" if state == "FAILED" else "CANCELED"
+
     async def _preparation_result(self, job, state: str) -> float | None:
         with self.db.session() as session:
             self.store.owned(session, job)
             task = session.get(Task, job.payload["task_id"])
+            if task.cancel_requested and not task.remote_id:
+                self.stop_preparation(session, task, "CANCELED")
+                return None
             if state == "success":
                 transition(session, task, "READY", "cloud_output")
                 return time.time()

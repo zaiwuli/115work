@@ -223,6 +223,15 @@ def task_command(request, task_id, action, expected_version=None):
             if task.state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
                 raise HTTPException(409, detail="TASK_ALREADY_TERMINAL")
             task.cancel_requested = True
+            if task.source == "115" and not task.remote_id and task.stage in {
+                "cloud_prepare", "cloud_inspect", "cloud_password",
+            }:
+                # Wake queued observation promptly without disturbing an in-flight request.
+                for job in session.scalars(select(Job).where(
+                    Job.kind == "cloud_extract", Job.state == "READY",
+                    Job.payload["task_id"].as_string() == task.id,
+                )):
+                    job.due = time.time()
             if task.remote_id or task.stage in {"cloud_inspect", "cloud_export_unknown"}:
                 record(session, task.id, "CANCEL_REQUESTED", task.stage,
                        "Remote operation may continue")
