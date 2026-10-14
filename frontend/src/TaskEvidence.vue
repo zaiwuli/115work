@@ -61,7 +61,8 @@ async function command(suffix: string, extra: any = {}) {
     <p class="mt-2">{{ stateLabel(task.transfer.state) }} · 重试 {{ task.transfer.attempts }} 次</p>
     <p v-if="task.transfer.error" class="error-text">{{ textLabel(task.transfer.error) }}</p>
   </section>
-  <section v-else-if="task.stage === 'cache'" class="task-evidence"><h3>缓存传输</h3><p>等待下载 / 获取下载地址</p></section>
+  <section v-else-if="task.stage === 'cache'" class="task-evidence"><h3>缓存传输</h3><p>{{ task.state === 'FAILED' ? '下载失败，尚未开始传输' : '等待下载 / 获取下载地址' }}</p></section>
+  <section v-if="task.output.download_endpoint" class="task-evidence"><h3>下载地址诊断</h3><p>{{ task.output.download_endpoint.scheme }} · {{ task.output.download_endpoint.host }}</p></section>
   <section v-if="task.steps?.length" class="task-evidence">
     <h3>执行步骤</h3>
     <div v-for="step in task.steps" :key="step.id" class="event-line">

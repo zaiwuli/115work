@@ -35,9 +35,7 @@ class TransferService:
         trusted_local = host in self.config.allowed_local_download_hosts
         if parsed.scheme not in {"https", "http"} or parsed.username or parsed.password or parsed.fragment:
             raise ValueError("UNSAFE_DOWNLOAD_URL")
-        if not trusted_local and (parsed.scheme != "https" or not host_allowed(
-            host, self.config.allowed_download_hosts
-        )):
+        if not trusted_local and not host_allowed(host, self.config.allowed_download_hosts):
             raise ValueError("DOWNLOAD_HOST_NOT_AUTHORIZED")
         addresses = await asyncio.to_thread(socket.getaddrinfo, host, parsed.port or (
             443 if parsed.scheme == "https" else 80
@@ -100,6 +98,13 @@ class TransferService:
             route = await self.adapter.download(task.locator["pickcode"])
         else:
             raise ValueError("UNSUPPORTED_DOWNLOAD_SOURCE")
+        parsed_route = urlsplit(route["url"])
+        with self.db.session() as session:
+            self.store.owned(session, job)
+            current = session.get(Task, task.id)
+            current.output = current.output | {"download_endpoint": {
+                "scheme": parsed_route.scheme, "host": parsed_route.hostname or "",
+            }}
         host, addresses = await self.validate_url(route["url"])
         with self.db.session() as session:
             self.store.owned(session, job)
