@@ -90,6 +90,7 @@ export function errorLabel(value: string) {
 }
 export const stageNames: Record<string, string> = {
   offline_submit: '提交离线', offline_download: '离线下载', discover: '等待发现文件',
+  offline_manual: '等待手动查询',
   cloud_prepare: '等待云解压', cloud_inspect: '云解压分析', cloud_output: '准备云端输出',
   cloud_progress: '云解压进行中', cloud_verify: '确认云端完成', cloud_export_unknown: '提交结果核对',
   cloud_password: '等待密码', local_fallback: '本地兜底待批准', cache: '缓存文件',

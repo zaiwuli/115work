@@ -17,6 +17,9 @@ from app.services.events import record
 
 POLLABLE = {"submitted", "downloading", "unknown", "submission_unknown"}
 RETRYABLE = {"failed", "submit_failed"}
+WINDOW_SECONDS = 90
+SCAN_DELAYS = (120, 300)
+POLL_DEADLINE_SECONDS = 86400
 
 
 class OfflineService:
@@ -63,7 +66,7 @@ class OfflineService:
             window = next((x for x in session.scalars(select(Settings).where(
                 Settings.key.startswith("offline-window:"),
             )) if x.value["root"] == root and x.value["date"] == date
-                and now < x.value["start"] + 270), None)
+                and now < x.value["start"] + WINDOW_SECONDS), None)
             ids = list(session.scalars(select(Offline.id).where(Offline.batch_id == batch.id)))
             if window:
                 window.value = window.value | {"ids": window.value["ids"] + ids}
@@ -85,7 +88,7 @@ class OfflineService:
         for window in session.scalars(select(Settings).where(Settings.key.startswith("offline-window:"))):
             value = window.value
             number = value["round"]
-            if number >= 2 or now < value["start"] + (300 if number == 0 else 600):
+            if number >= 2 or now < value["start"] + SCAN_DELAYS[number]:
                 continue
             grouped = {}
             for identifier in value["ids"]:
@@ -176,16 +179,33 @@ class OfflineService:
         return time.time() + 2 if len(tasks) == 10 else None
 
     def schedule_poll(self, session, now: float, manual: bool = False):
+        if not manual:
+            self.pause_expired(session, now)
         query = select(Offline).where(Offline.status.in_(POLLABLE))
         if not manual:
             query = query.where(Offline.next_check <= now)
         if session.scalar(query.limit(1)):
             enqueue(session, "offline-poll:115-main", "offline_poll", {"manual": manual})
 
+    def pause_expired(self, session, now):
+        tasks = session.scalars(select(Offline).where(
+            Offline.status.in_(POLLABLE), Offline.next_check.is_not(None)))
+        for task in tasks:
+            execution = session.scalar(select(OfflineExecution).where(
+                OfflineExecution.offline_id == task.id,
+                OfflineExecution.generation == task.generation))
+            started = execution.created_at if execution else task.created_at
+            if now >= started + POLL_DEADLINE_SECONDS:
+                task.next_check, task.stage = None, "offline_manual"
+                record(session, task.id, "OFFLINE_POLL_PAUSED", "offline_manual",
+                       "离线状态自动查询已满24小时，等待手动查询；未判定下载失败")
+
     async def poll(self, job=None, now: float | None = None, manual: bool = False):
         now = time.time() if now is None else now
         async with self.poll_lock:
             with self.db.session() as session:
+                if not manual:
+                    self.pause_expired(session, now)
                 query = select(Offline).where(Offline.status.in_(POLLABLE))
                 if not manual:
                     query = query.where(Offline.next_check <= now)
@@ -226,7 +246,14 @@ class OfflineService:
                     interval = {1: 180, 2: 300}.get(
                         current.check_count, self.db.settings()["offline_fallback_seconds"]
                     )
-                    current.next_check = now + interval if status in POLLABLE else None
+                    started = execution.created_at if execution else current.created_at
+                    expired = now >= started + POLL_DEADLINE_SECONDS
+                    current.next_check = (
+                        min(now + interval, started + POLL_DEADLINE_SECONDS)
+                        if status in POLLABLE and not expired else None
+                    )
+                    if status in POLLABLE:
+                        current.stage = "offline_manual" if expired else "offline_download"
                     if status == "success":
                         current.stage = "discover"
 
