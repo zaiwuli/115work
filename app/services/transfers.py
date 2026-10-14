@@ -22,6 +22,23 @@ def host_allowed(host, patterns):
     return any(host == p or (p.startswith(".") and host.endswith(p) and host != p[1:])
                for p in patterns)
 
+def normalize_hosts(values):
+    if not isinstance(values, list) or len(values) > 100:
+        raise ValueError("INVALID_DOWNLOAD_HOSTS")
+    result = []
+    for value in values:
+        if not isinstance(value, str):
+            raise ValueError("INVALID_DOWNLOAD_HOSTS")
+        value = value.strip().lower()
+        domain = value.lstrip(".")
+        if len(value) > 254 or not re.fullmatch(
+            r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", domain
+        ) or value.startswith(".."):
+            raise ValueError("INVALID_DOWNLOAD_HOSTS")
+        if value not in result:
+            result.append(value)
+    return result
+
 
 class TransferService:
     def __init__(self, db, config, store, adapter):
@@ -35,7 +52,9 @@ class TransferService:
         trusted_local = host in self.config.allowed_local_download_hosts
         if parsed.scheme not in {"https", "http"} or parsed.username or parsed.password or parsed.fragment:
             raise ValueError("UNSAFE_DOWNLOAD_URL")
-        if not trusted_local and not host_allowed(host, self.config.allowed_download_hosts):
+        configured = self.db.settings().get("allowed_download_hosts")
+        patterns = self.config.allowed_download_hosts if configured is None else configured
+        if not trusted_local and not host_allowed(host, patterns):
             raise ValueError("DOWNLOAD_HOST_NOT_AUTHORIZED")
         addresses = await asyncio.to_thread(socket.getaddrinfo, host, parsed.port or (
             443 if parsed.scheme == "https" else 80

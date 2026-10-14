@@ -132,14 +132,18 @@ def seven_entries(source, password, max_bytes, max_files):
         total_size += size
         entries.append((fields["Path"], size, fields.get("Folder") == "+" or
                         fields.get("Attributes", "").startswith("D")))
-        if len(entries) > max_files or total_size > max_bytes:
-            raise ValueError("ARCHIVE_EXPANSION_LIMIT")
+        if len(entries) > max_files:
+            raise ValueError("ARCHIVE_FILE_LIMIT")
+        if total_size > max_bytes:
+            raise ValueError("ARCHIVE_SIZE_LIMIT")
     return tool, entries
 
 
 def extract(source: Path, output: Path, max_bytes: int, max_files: int) -> dict:
+    max_bytes = max_bytes or 2**63 - 1
     output.mkdir(parents=True, exist_ok=False)
-    if shutil.disk_usage(output).free < min(max_bytes, source.stat().st_size * 3) + 64 * 1024**2:
+    reserve = int(os.environ.get("WORK115_LOCAL_RESERVE_BYTES", str(64 * 1024**2)))
+    if shutil.disk_usage(output).free < reserve:
         raise ValueError("INSUFFICIENT_OUTPUT_SPACE")
     manifest = []
     total = 0
@@ -159,12 +163,16 @@ def extract(source: Path, output: Path, max_bytes: int, max_files: int) -> dict:
             target.mkdir(parents=True, exist_ok=True)
             return
         total += size
-        if total > max_bytes or len(manifest) >= max_files:
-            raise ValueError("ARCHIVE_EXPANSION_LIMIT")
+        if total > max_bytes:
+            raise ValueError("ARCHIVE_SIZE_LIMIT")
+        if len(manifest) >= max_files:
+            raise ValueError("ARCHIVE_FILE_LIMIT")
         target.parent.mkdir(parents=True, exist_ok=True)
         digest, copied = hashlib.sha256(), 0
         with opener() as reader, target.open("xb") as writer:
             while chunk := reader.read(1024 * 1024):
+                if shutil.disk_usage(output).free < reserve + len(chunk):
+                    raise ValueError("INSUFFICIENT_OUTPUT_SPACE")
                 copied += len(chunk)
                 if copied > size or copied > max_bytes:
                     raise ValueError("ARCHIVE_ENTRY_SIZE_MISMATCH")
@@ -193,8 +201,10 @@ def extract(source: Path, output: Path, max_bytes: int, max_files: int) -> dict:
     if native_zip:
         with zipfile.ZipFile(source) as archive:
             entries = archive.infolist()
-            if len(entries) > max_files or sum(x.file_size for x in entries) > max_bytes:
-                raise ValueError("ARCHIVE_EXPANSION_LIMIT")
+            if len(entries) > max_files:
+                raise ValueError("ARCHIVE_FILE_LIMIT")
+            if sum(x.file_size for x in entries) > max_bytes:
+                raise ValueError("ARCHIVE_SIZE_LIMIT")
             for entry in entries:
                 mode = entry.external_attr >> 16
                 if stat.S_ISLNK(mode) or (stat.S_IFMT(mode) and not (

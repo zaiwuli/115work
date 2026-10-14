@@ -272,6 +272,11 @@ class LocalService:
         return None
 
     async def run(self, job):
+        settings = self.db.settings()
+        max_bytes = settings.get("local_max_extract_bytes")
+        max_bytes = self.config.max_extract_bytes if max_bytes is None else max_bytes
+        max_files = settings.get("local_max_extract_files") or self.config.max_extract_files
+        reserve_bytes = settings.get("local_reserve_bytes", 5 * 1024**3)
         with self.db.session() as session:
             self.store.owned(session, job)
             task = session.get(Task, job.payload["task_id"])
@@ -365,16 +370,31 @@ class LocalService:
                     env["WORK115_XTRACTR_PATH"] = self.config.xtractr_path
                 if self.config.extractor_path:
                     env["WORK115_EXTRACTOR_PATH"] = self.config.extractor_path
+                env["WORK115_LOCAL_RESERVE_BYTES"] = str(reserve_bytes)
+                if shutil.disk_usage(output_root).free < reserve_bytes:
+                    raise ValueError("INSUFFICIENT_OUTPUT_SPACE")
                 self.process = await asyncio.create_subprocess_exec(
                     sys.executable, "-m", "app.adapters.extract_worker", str(path), str(attempt_staging),
-                    "--max-bytes", str(self.config.max_extract_bytes),
-                    "--max-files", str(self.config.max_extract_files),
+                    "--max-bytes", str(max_bytes),
+                    "--max-files", str(max_files),
                     stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, env=env,
                     **({"creationflags": 512} if os.name == "nt" else {"start_new_session": True}),
                 )
                 try:
-                    stdout, _ = await asyncio.wait_for(self.process.communicate(),
-                                                       timeout=self.config.extract_timeout)
+                    communication = asyncio.create_task(self.process.communicate())
+                    deadline = time.monotonic() + self.config.extract_timeout
+                    try:
+                        while not communication.done():
+                            await asyncio.wait({communication}, timeout=0.5)
+                            if shutil.disk_usage(output_root).free < reserve_bytes:
+                                raise ValueError("INSUFFICIENT_OUTPUT_SPACE")
+                            if time.monotonic() > deadline:
+                                raise TimeoutError("EXTRACTION_TIMEOUT")
+                        stdout, _ = await communication
+                    finally:
+                        if not communication.done():
+                            await self.stop()
+                            await communication
                     result = json.loads(stdout)
                     with self.db.session() as session:
                         self.store.owned(session, job)

@@ -48,7 +48,7 @@ func (b *budget) validate(path string, mode os.FileMode) error {
 		key := strings.ToLower(relative)
 		if relative != "." && !b.directories[key] {
 			if len(b.directories)+len(b.seen) >= b.maxFiles {
-				return errors.New("ARCHIVE_EXPANSION_LIMIT")
+				return errors.New("ARCHIVE_FILE_LIMIT")
 			}
 			b.directories[key] = true
 		}
@@ -62,7 +62,7 @@ func (b *budget) validate(path string, mode os.FileMode) error {
 		return errors.New("DUPLICATE_ARCHIVE_ENTRY")
 	}
 	if len(b.seen)+len(b.directories) >= b.maxFiles {
-		return errors.New("ARCHIVE_EXPANSION_LIMIT")
+		return errors.New("ARCHIVE_FILE_LIMIT")
 	}
 	b.seen[key] = true
 	return nil
@@ -75,7 +75,7 @@ type budgetWriter struct {
 
 func (w *budgetWriter) Write(data []byte) (int, error) {
 	if int64(len(data)) > w.b.maxBytes-w.b.written {
-		return 0, errors.New("ARCHIVE_EXPANSION_LIMIT")
+		return 0, errors.New("ARCHIVE_SIZE_LIMIT")
 	}
 	n, err := w.Writer.Write(data)
 	w.b.written += int64(n)
@@ -155,7 +155,7 @@ func run(r request) (map[string]any, error) {
 	}
 	if err != nil {
 		for _, code := range []string{"ARCHIVE_PATH_REJECTED", "ARCHIVE_SPECIAL_FILE_REJECTED",
-			"DUPLICATE_ARCHIVE_ENTRY", "ARCHIVE_EXPANSION_LIMIT"} {
+			"DUPLICATE_ARCHIVE_ENTRY", "ARCHIVE_EXPANSION_LIMIT", "ARCHIVE_FILE_LIMIT", "ARCHIVE_SIZE_LIMIT"} {
 			if strings.Contains(err.Error(), code) {
 				return nil, errors.New(code)
 			}
@@ -179,8 +179,11 @@ func run(r request) (map[string]any, error) {
 			return errors.New("ARCHIVE_SPECIAL_FILE_REJECTED")
 		}
 		total += info.Size()
-		if total > r.MaxBytes || len(files) >= r.MaxFiles {
-			return errors.New("ARCHIVE_EXPANSION_LIMIT")
+		if total > r.MaxBytes {
+			return errors.New("ARCHIVE_SIZE_LIMIT")
+		}
+		if len(files) >= r.MaxFiles {
+			return errors.New("ARCHIVE_FILE_LIMIT")
 		}
 		reader, err := os.Open(path)
 		if err != nil {

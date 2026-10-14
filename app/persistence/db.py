@@ -10,6 +10,10 @@ from app.persistence.models import Settings
 DEFAULT_SETTINGS = {
     "paused": False,
     "local_extract_concurrency": 1,
+    "local_max_extract_bytes": None,
+    "local_max_extract_files": None,
+    "local_reserve_bytes": 5 * 1024**3,
+    "allowed_download_hosts": None,
     "cloud_root_cid": "",
     "cloud_archive_cid": "",
     "cloud_failed_cid": "",

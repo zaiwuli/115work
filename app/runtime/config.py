@@ -32,7 +32,7 @@ class Config(BaseSettings):
     extract_engine: Literal["xtractr", "7zip"] = "xtractr"
     extract_timeout: int = 1800
     cache_max_bytes: int = 100 * 1024**3
-    allowed_download_hosts: list[str] = [".115.com", ".115cdn.com", ".anxia.com"]
+    allowed_download_hosts: list[str] = [".115.com", ".115cdn.com", ".115cdn.net", ".anxia.com"]
     allowed_local_download_hosts: list[str] = []
     watcher_enabled: bool = True
     document_timeout: int = 30

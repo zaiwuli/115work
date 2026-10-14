@@ -5,7 +5,8 @@ const sections = [
   { key: 'connections', title: '连接管理', to: '/settings/connections' },
   { key: 'cloud', title: '云目录', to: '/settings?section=cloud' },
   { key: 'notifications', title: '通知', to: '/settings?section=notifications' },
-  { key: 'scheduler', title: '调度', to: '/settings?section=scheduler' },
+  { key: 'scheduler', title: '任务执行', to: '/settings?section=scheduler' },
+  { key: 'downloads', title: '缓存下载', to: '/settings?section=downloads' },
   { key: 'status', title: '运行状态', to: '/settings?section=status' },
 ]
 </script>

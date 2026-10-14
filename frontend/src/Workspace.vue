@@ -16,6 +16,20 @@ const route = useRoute()
 const system = useSystem()
 const view = computed(() => String(route.params.view || 'tasks'))
 const settingsSection = computed(() => String(route.query.section || 'cloud'))
+const downloadHost = ref('')
+const localLimitGiB = computed({
+  get: () => Number(settings.value.local_max_extract_bytes || 0) / 1024**3,
+  set: (value: number) => { settings.value.local_max_extract_bytes = Math.round(Number(value) * 1024**3) },
+})
+const localReserveGiB = computed({
+  get: () => Number(settings.value.local_reserve_bytes || 0) / 1024**3,
+  set: (value: number) => { settings.value.local_reserve_bytes = Math.round(Number(value) * 1024**3) },
+})
+function addDownloadHost() {
+  const value = downloadHost.value.trim().toLowerCase()
+  if (value && !settings.value.allowed_download_hosts.includes(value)) settings.value.allowed_download_hosts.push(value)
+  downloadHost.value = ''
+}
 const offlineMode = computed(() => view.value === 'tasks' && route.query.type === 'offline')
 const offlineBatches = ref<any[]>([])
 const canWrite = computed(() => system.status?.role !== 'readonly')
@@ -278,7 +292,7 @@ async function saveSettings() {
   saveFeedback.value = ''
   error.value = ''
   const values: any = {}
-  for (const key of ['local_extract_concurrency', 'life_monitor_enabled', 'cloud_extract_by_date', 'cloud_retry_seconds',
+  for (const key of ['local_max_extract_bytes', 'local_max_extract_files', 'local_reserve_bytes', 'allowed_download_hosts', 'local_extract_concurrency', 'life_monitor_enabled', 'cloud_extract_by_date', 'cloud_retry_seconds',
     'cloud_cooldown_seconds', 'offline_fallback_seconds', 'notification_offline',
     'notification_cloud', 'notification_local', 'notification_webhook',
     'notification_enabled', 'notification_provider', 'notification_template',
@@ -437,6 +451,8 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       <section v-if="settingsSection === 'cloud'" class="settings-section"><h2>115 云根目录</h2><div class="form-grid"><v-text-field v-model="settings.cloud_root_cid" label="根目录 CID" /><v-btn :disabled="loading || !settings.cloud_root_cid" color="primary" @click="action('/api/v1/cloud/root', { cid: settings.cloud_root_cid }, '云目录已初始化')"><FolderOpen :size="17" class="mr-2" />初始化目录</v-btn></div><div class="form-grid"><v-text-field :model-value="settings.offline_root_cid" label="离线目录 CID" readonly /><v-text-field :model-value="settings.cloud_output_cid" label="解压目录 CID" readonly /><v-text-field :model-value="settings.cloud_archive_cid" label="归档目录 CID" readonly /><v-text-field :model-value="settings.cloud_failed_cid" label="失败目录 CID" readonly /></div><v-switch v-model="settings.cloud_extract_by_date" label="云解压输出按日期建目录" color="primary" hide-details /></section>
       <section v-if="settingsSection === 'cloud'" class="settings-section"><h2>云目录监测</h2><div class="import-actions"><v-switch v-model="settings.life_monitor_enabled" label="启用生活事件监测（每30分钟）" color="primary" hide-details /><v-btn variant="outlined" to="/sources"><FolderOpen :size="17" class="mr-2" />监测目录管理</v-btn></div></section>
       <section v-if="settingsSection === 'scheduler'" class="settings-section"><h2>调度节奏</h2><div class="form-grid"><v-select v-model="settings.local_extract_concurrency" :items="[1, 2, 3, 4]" label="本地同时解压数量" /><v-text-field v-model.number="settings.cloud_retry_seconds" type="number" min="15" label="云解压重试间隔 / 秒" /><v-text-field v-model.number="settings.cloud_cooldown_seconds" type="number" min="15" label="成功冷却 / 秒" /><v-text-field v-model.number="settings.offline_fallback_seconds" type="number" min="15" label="离线兜底查询 / 秒" /></div></section>
+      <section v-if="settingsSection === 'scheduler'" class="settings-section"><h2>本地解压</h2><div class="form-grid"><v-switch :model-value="settings.local_max_extract_bytes === 0" label="不限制本地解压输出总量" color="primary" @update:model-value="settings.local_max_extract_bytes = $event ? 0 : 20 * 1024**3" /><v-text-field v-if="settings.local_max_extract_bytes !== 0" v-model.number="localLimitGiB" type="number" min="0.01" step="1" label="输出总量上限 / GiB" /><v-text-field v-model.number="settings.local_max_extract_files" type="number" min="1" label="文件数量上限" /><v-text-field v-model.number="localReserveGiB" type="number" min="0" step="1" label="输出盘预留空间 / GiB" /></div></section>
+      <section v-if="settingsSection === 'downloads'" class="settings-section"><h2>允许的下载域名</h2><div class="import-actions"><v-text-field v-model="downloadHost" label="域名或子域名范围（.115cdn.net）" @keydown.enter.prevent="addDownloadHost" /><v-btn icon variant="outlined" title="添加域名" aria-label="添加域名" :disabled="!downloadHost.trim()" @click="addDownloadHost"><Plus :size="18" /></v-btn></div><div v-for="(host, index) in settings.allowed_download_hosts || []" :key="host" class="event-line"><span class="path-cell">{{ host }}</span><v-btn icon variant="text" title="删除域名" aria-label="删除域名" @click="settings.allowed_download_hosts.splice(index, 1)"><Trash2 :size="17" /></v-btn></div></section>
       <section v-if="settingsSection === 'notifications'" class="settings-section notification-form"><h2>通知</h2>
         <v-switch v-model="settings.notification_enabled" label="启用通知" color="primary" hide-details />
         <v-select v-model="settings.notification_provider" label="通知方式" :items="[{ title: 'MS 通知', value: 'ms' }, { title: '常规 Webhook', value: 'webhook' }]" />
@@ -448,7 +464,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
         <v-btn variant="text" class="mt-3" @click="action('/api/notification', { api_key: '' }, 'MS 密钥已清除')"><Trash2 :size="16" class="mr-2" />清除密钥</v-btn>
         <v-btn variant="text" class="mt-3" @click="action('/api/notification/test')"><Send :size="16" class="mr-2" />测试通知</v-btn>
       </section>
-      <div v-if="['cloud', 'scheduler', 'notifications'].includes(settingsSection)" class="save-row"><v-btn color="primary" :disabled="loading || savingSettings" :loading="savingSettings" @click="saveSettings"><Save :size="17" class="mr-2" />{{ savingSettings ? '保存中' : '保存设置' }}</v-btn><p v-if="saveFeedback" :class="saveSucceeded ? 'success-text' : 'error-text'" role="status">{{ saveFeedback }}</p></div>
+      <div v-if="['cloud', 'scheduler', 'downloads', 'notifications'].includes(settingsSection)" class="save-row"><v-btn color="primary" :disabled="loading || savingSettings" :loading="savingSettings" @click="saveSettings"><Save :size="17" class="mr-2" />{{ savingSettings ? '保存中' : '保存设置' }}</v-btn><p v-if="saveFeedback" :class="saveSucceeded ? 'success-text' : 'error-text'" role="status">{{ saveFeedback }}</p></div>
       <section v-if="settingsSection === 'passwords'" class="settings-section"><h2>压缩包密码 <span class="muted">({{ settings.password_count || 0 }})</span></h2><div class="form-grid"><v-text-field v-model="newPassword" label="新增密码" type="password" autocomplete="off" /><v-btn variant="outlined" :disabled="!newPassword" @click="action('/api/passwords', { action: 'add', password: newPassword }).then(() => newPassword = '')"><Plus :size="16" class="mr-2" />添加</v-btn></div><div class="password-list"><div v-for="index in (settings.password_count || 0)" :key="index"><span>密码 {{ index }} · ********</span><button :aria-label="'移除密码' + index" title="移除密码" @click="action('/api/passwords', { action: 'remove', index: index - 1 })"><Trash2 :size="16" /></button></div></div></section>
     </template>
 

@@ -482,6 +482,12 @@ def refresh_sources(request: Request):
 @secured.get("/api/v1/settings")
 def get_settings(request: Request):
     settings = request.app.state.db.settings()
+    config = request.app.state.config
+    settings = settings | {
+        "allowed_download_hosts": settings["allowed_download_hosts"] if settings["allowed_download_hosts"] is not None else config.allowed_download_hosts,
+        "local_max_extract_bytes": settings["local_max_extract_bytes"] if settings["local_max_extract_bytes"] is not None else config.max_extract_bytes,
+        "local_max_extract_files": settings["local_max_extract_files"] if settings["local_max_extract_files"] is not None else config.max_extract_files,
+    }
     return {k: settings[k] for k in DEFAULT_SETTINGS if k != "passwords"} | {
         "password_count": len(settings["passwords"]),
         "notification_api_key_configured": bool(settings.get("notification_api_key")),
@@ -498,6 +504,16 @@ async def set_settings(request: Request):
     if set(body) - allowed:
         raise HTTPException(422, detail="UNKNOWN_OR_SECRET_SETTINGS")
     for key, value in body.items():
+        if key in {"local_max_extract_bytes", "local_reserve_bytes", "local_max_extract_files"}:
+            minimum = 1 if key == "local_max_extract_files" else 0
+            if type(value) is not int or not minimum <= value <= 2**53 - 1:
+                raise HTTPException(422, detail="INVALID_LOCAL_LIMIT")
+        if key == "allowed_download_hosts":
+            from app.services.transfers import normalize_hosts
+            try:
+                body[key] = normalize_hosts(value)
+            except ValueError:
+                raise HTTPException(422, detail="INVALID_DOWNLOAD_HOSTS") from None
         if key == "local_extract_concurrency" and (type(value) is not int or not 1 <= value <= 4):
             raise HTTPException(422, detail="INVALID_LOCAL_CONCURRENCY")
         if key.endswith("_seconds") and (type(value) is not int or value < 15 or value > 86400):
