@@ -18,6 +18,9 @@ const drawer = ref(window.innerWidth >= 960)
 watch(display.mdAndUp, value => { drawer.value = value })
 let timer: ReturnType<typeof setInterval> | undefined
 let events: EventSource | undefined
+let eventRefresh: ReturnType<typeof setTimeout> | undefined
+let retryDelay = 10000
+let refreshGeneration = 0
 const navigation = [
   { key: 'tasks', title: '任务中心', icon: ListTodo },
   { key: 'offline', title: '离线下载', icon: Download },
@@ -39,13 +42,28 @@ async function connect() {
   startAutoRefresh()
 }
 function startAutoRefresh() {
-  clearInterval(timer)
+  const generation = ++refreshGeneration
+  clearTimeout(timer)
+  clearTimeout(eventRefresh)
+  eventRefresh = undefined
   events?.close()
   if (!system.autoRefresh) return
-  timer = setInterval(() => void system.refresh(), 10000)
+  const poll = async () => {
+    if (!system.autoRefresh || generation !== refreshGeneration) return
+    await system.refresh()
+    retryDelay = system.connected ? 10000 : Math.min(60000, retryDelay * 2)
+    if (system.autoRefresh && generation === refreshGeneration) timer = setTimeout(poll, retryDelay)
+  }
+  timer = setTimeout(poll, retryDelay)
   if (!sessionStorage.getItem('115work-token')) {
-    events = new EventSource('/api/v1/events')
-    events.onmessage = () => void system.refresh()
+    events = new EventSource('/api/v1/events?live=true')
+    events.onmessage = () => {
+      if (eventRefresh || !system.connected) return
+      eventRefresh = setTimeout(() => {
+        eventRefresh = undefined
+        if (system.autoRefresh) void system.refresh()
+      }, 2000)
+    }
   }
 }
 watch(() => system.autoRefresh, startAutoRefresh)
@@ -54,7 +72,7 @@ async function control() {
   catch (error) { system.error = (error as Error).message }
 }
 onMounted(() => void connect())
-onBeforeUnmount(() => { clearInterval(timer); events?.close() })
+onBeforeUnmount(() => { refreshGeneration++; clearTimeout(timer); clearTimeout(eventRefresh); events?.close() })
 </script>
 
 <template>

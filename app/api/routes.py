@@ -113,9 +113,6 @@ def system_status(request: Request):
         tasks = list(session.scalars(select(Task).where(
             Task.state.not_in(["SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]),
         ).order_by(Task.created_at.desc()).limit(100)))
-        history = list(session.scalars(select(Task).where(
-            Task.state.in_(["SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]), ~Task.hidden,
-        ).order_by(Task.created_at.desc()).limit(100)))
         events = list(session.scalars(select(Event).order_by(Event.id.desc()).limit(30)))
         sources = list(session.scalars(select(Source)))
         total = session.scalar(select(func.count(Task.id)).where(Task.state == "SUCCEEDED"))
@@ -133,7 +130,8 @@ def system_status(request: Request):
         "updated_at": time.time(), "paused": settings["paused"],
         "totals": {"active": active, "finished": total, "retries": sum(t.attempts for t in tasks),
                    "workers": 1, "approvals": approvals, "failed": failures},
-        "tasks": [serialize(x) for x in tasks], "history": [serialize(x) for x in history],
+        "tasks": [{"id": x.id, "name": x.name, "source": x.source, "state": x.state,
+                   "stage": x.stage, "attempts": x.attempts} for x in tasks],
         "logs": [serialize(x) for x in events], "sources": [serialize(x) for x in sources],
         "folders": [{"path": x.config.get("path", ""), "tracked": 0,
                      "extract_path": x.config.get("output_path") or str(request.app.state.config.local_path("output"))}
@@ -279,11 +277,27 @@ def task_command(request, task_id, action, expected_version=None):
                 else:
                     if task.output.get("failure_archive_result") in {"PENDING", "FAILED"}:
                         raise HTTPException(409, detail="FAILED_ARCHIVE_RECONCILIATION_REQUIRED")
-                    if task.stage != "local_fallback" or not (
+                    failed_cloud = task.state == "FAILED" and task.stage in {
+                        "cloud_prepare", "cloud_inspect", "cloud_output", "cloud_progress", "cloud_verify",
+                    } and task.error in {"REMOTE_REJECTED", "CLOUD_CONTENT_FAILED", "CLOUD_EXPORT_REJECTED"}
+                    if (task.stage != "local_fallback" and not failed_cloud) or not (
                         task.locator.get("pickcode")
                     ):
                         raise HTTPException(409, detail="FALLBACK_CAPABILITY_REQUIRED")
-                    transition(session, task, "READY", "cache")
+                    if failed_cloud:
+                        if session.scalar(select(Job.id).where(
+                            Job.payload["task_id"].as_string() == task.id,
+                            Job.state.in_(["RUNNING", "READY", "RECONCILING"]),
+                        )):
+                            raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
+                        from app.services.execution import begin_execution
+                        begin_execution(session, task)
+                        task.output, task.remote_id, task.completed_at = {}, "", None
+                        task.cancel_requested = False
+                        identity = session.get(Identity, task.content_key)
+                        if identity:
+                            session.delete(identity)
+                    transition(session, task, "READY", "cache", manual_retry=failed_cloud)
                     task.policy = task.policy | {"fallback_approved": True}
                     enqueue(session, "local:" + task.id, "local_extract", {"task_id": task.id})
             else:
@@ -910,11 +924,14 @@ async def maintenance(request: Request):
 
 
 @secured.get("/api/v1/events")
-async def events(request: Request, after: int = 0):
+async def events(request: Request, after: int = 0, live: bool = False):
     try:
         after = max(after, int(request.headers.get("last-event-id", "0")))
     except ValueError:
         raise HTTPException(422, detail="INVALID_EVENT_CURSOR") from None
+    if live and not after and not request.headers.get("last-event-id"):
+        with request.app.state.db.session() as session:
+            after = session.scalar(select(func.max(Event.id))) or 0
 
     async def stream():
         cursor = after

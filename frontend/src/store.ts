@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
 import { api } from './api'
 
+let statusRequest: Promise<void> | undefined
+
 export const useSystem = defineStore('system', {
   state: () => ({
     status: null as any, error: '', busy: false, connected: false, refreshVersion: 0,
@@ -16,13 +18,16 @@ export const useSystem = defineStore('system', {
       this.refreshVersion++
     },
     async refresh() {
-      try {
+      if (statusRequest) return statusRequest
+      statusRequest = (async () => { try {
         this.status = await api('/api/status')
         this.connected = true
       } catch (error) {
         this.connected = false
         this.error = (error as Error).message
-      }
+      } })()
+      try { await statusRequest }
+      finally { statusRequest = undefined }
     },
     async command(path: string, body: unknown = {}) {
       this.busy = true
