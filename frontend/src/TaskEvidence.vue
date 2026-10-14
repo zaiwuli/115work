@@ -19,7 +19,6 @@ async function command(suffix: string, extra: any = {}) {
       expected_version: props.task.version, ...extra,
     })
     Object.assign(props.task, await api('/api/v1/tasks/' + props.task.id))
-    await system.refresh()
     confirmName.value = ''
     emit('updated')
   } catch (e) { error.value = (e as Error).message }

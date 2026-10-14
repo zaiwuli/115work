@@ -19,8 +19,8 @@ def delete_task(session, identifier):
         raise ValueError("TASK_NOT_FOUND")
     if task.state not in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
         raise ValueError("TERMINAL_TASK_REQUIRED")
-    jobs = [job for job in session.scalars(select(Job))
-            if job.payload.get("task_id") == identifier]
+    jobs = list(session.scalars(select(Job).where(
+        Job.payload["task_id"].as_string() == identifier)))
     if any(job.state in {"RUNNING", "READY", "RECONCILING"} for job in jobs):
         raise ValueError("TASK_OPERATIONS_PENDING")
     active = session.get(Settings, "cloud_active")
@@ -47,8 +47,8 @@ def delete_offline(session, identifier):
         raise ValueError("OFFLINE_TASK_NOT_FOUND")
     if task.status in {"submitting", "submission_unknown"}:
         raise ValueError("OFFLINE_OPERATION_PENDING")
-    jobs = [job for job in session.scalars(select(Job))
-            if job.payload.get("batch_id") == task.batch_id]
+    jobs = list(session.scalars(select(Job).where(
+        Job.payload["batch_id"].as_string() == task.batch_id)))
     if any(job.state == "RUNNING" for job in jobs):
         raise ValueError("OFFLINE_OPERATION_PENDING")
     affected_batches = list(session.scalars(select(BatchItem.batch_id).where(
@@ -72,9 +72,10 @@ def delete_offline(session, identifier):
             select(BatchItem.id).where(BatchItem.batch_id == batch_id)
         ):
             continue
-        for job in session.scalars(select(Job)):
-            if job.payload.get("batch_id") == batch_id:
-                session.delete(job)
+        for job in session.scalars(select(Job).where(
+            Job.payload["batch_id"].as_string() == batch_id,
+        )):
+            session.delete(job)
         session.execute(delete(DocumentImport).where(DocumentImport.batch_id == batch_id))
         remove_events(session, batch_id)
         session.execute(delete(Settings).where(Settings.key == "batch-owner:" + batch_id))

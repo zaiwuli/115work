@@ -5,12 +5,17 @@ export async function api<T = any>(path: string, body?: unknown, method?: string
   if (token) headers.Authorization = `Bearer ${token}`
   if (csrf) headers['X-CSRF-Token'] = csrf
   if (body !== undefined) headers['Content-Type'] = 'application/json'
-  const response = await fetch(path, {
+  let response: Response
+  try {
+    response = await fetch(path, {
     method: method || (body === undefined ? 'GET' : 'POST'),
     credentials: 'same-origin',
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
-  })
+    })
+  } catch {
+    throw new Error('无法连接后台，操作结果尚未确认。请恢复连接后刷新核对，不要连续重复操作。')
+  }
   const data = await response.json()
   if (!response.ok) throw new Error(errorLabel(data.error?.code || 'REQUEST_FAILED'))
   return data

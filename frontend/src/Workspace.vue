@@ -157,7 +157,6 @@ async function action(endpoint: string, body: unknown = {}, success = '操作已
   try {
     await api(endpoint, body)
     message.value = success
-    await system.refresh()
     await load()
     return true
   } catch (cause) { error.value = (cause as Error).message; return false }

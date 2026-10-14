@@ -204,6 +204,7 @@ def task_command(request, task_id, action, expected_version=None):
             if identity:
                 session.delete(identity)
             task.cancel_requested = False
+            task.completed_at = None
             transfer = session.get(Transfer, task.id)
             if transfer:
                 transfer.attempts, transfer.error, transfer.state = 0, "", "READY"
@@ -211,7 +212,9 @@ def task_command(request, task_id, action, expected_version=None):
                 task.output = {}
             if task.source == "115" and task.stage.startswith("cloud"):
                 task.stage = "cloud_prepare"
-                task.attempts = 0
+                task.remote_id = ""
+                task.password_attempts = 0
+                task.output = {}
                 enqueue(session, "archive:" + task.id, "cloud_extract", {"task_id": task.id})
             elif task.stage == "document_copy":
                 enqueue(session, "document-copy:" + task.id, "document_copy", {"task_id": task.id})

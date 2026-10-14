@@ -697,7 +697,7 @@ async def reconcile_failure_archive(request: Request, task_id: str):
 @router.post("/tasks/{task_id}/reprocess", status_code=202)
 async def reprocess_task(request: Request, task_id: str):
     body = await request.json()
-    from app.persistence.models import ResourceLink
+    from app.persistence.models import Job
     from app.services.events import record
     with request.app.state.db.session() as session:
         previous = session.get(Task, task_id)
@@ -711,21 +711,27 @@ async def reprocess_task(request: Request, task_id: str):
             raise HTTPException(409, detail="ACTIVE_RESOURCE_EXECUTION")
         from app.services.archives import is_archive
         document = not is_archive(previous.name) and not previous.locator.get("remote_parts")
-        task = Task(object_key=previous.object_key, content_key=previous.content_key,
-                    source=previous.source, name=previous.name, size=previous.size,
-                    stage="document_copy" if document else "cloud_prepare" if previous.source == "115" else
-                    "local_extract",
-                    locator=previous.locator, policy=previous.policy | {"previous_task_id": previous.id})
-        session.add(task)
-        session.flush()
+        pending = session.scalar(select(Job.id).where(
+            Job.payload["task_id"].as_string() == task_id,
+            Job.state.in_(["RUNNING", "READY", "RECONCILING"]),
+        ))
+        if pending:
+            raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
+        task = previous
+        task.state, task.stage = "READY", (
+            "document_copy" if document else "cloud_prepare" if task.source == "115"
+            else "local_extract"
+        )
+        task.output, task.remote_id, task.error = {}, "", ""
+        task.password_attempts, task.cancel_requested, task.completed_at = 0, False, None
+        task.updated_at = time.time()
+        task.policy = task.policy | {"auto_extract": True}
         identity = session.get(Identity, previous.content_key)
         if identity:
             session.delete(identity)
-        for link in session.scalars(select(ResourceLink).where(ResourceLink.task_id == previous.id)):
-            session.add(ResourceLink(offline_id=link.offline_id, task_id=task.id, evidence="manual-reprocess"))
         kind = "document_copy" if document else "cloud_extract" if task.source == "115" else "local_extract"
         enqueue(session, kind + ":" + task.id, kind, {"task_id": task.id})
-        record(session, task.id, "REPROCESS_AUTHORIZED", task.stage, "New processing generation")
+        record(session, task.id, "REPROCESS_AUTHORIZED", task.stage, "原任务重新进入处理队列")
         audit(request, session, "REPROCESS", task.id, {"previous_task": previous.id})
         identifier = task.id
     request.app.state.engine.wake.set()
