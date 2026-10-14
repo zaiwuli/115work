@@ -673,9 +673,11 @@ async def reconcile_task(request: Request, task_id: str):
 async def reconcile_failure_archive(request: Request, task_id: str):
     body = await request.json()
     from app.persistence.models import Operation
+    from app.services.execution import operation_scope
     with request.app.state.db.session() as session:
         task = session.get(Task, task_id)
-        operation = session.get(Operation, "failed-archive:" + task_id)
+        key = "failed-archive:" + operation_scope(task) if task else ""
+        operation = session.get(Operation, key)
         if (not task or not operation or task.source != "115" or
             task.output.get("failure_archive_result") not in {"PENDING", "FAILED"}):
             raise HTTPException(409, detail="FAILED_ARCHIVE_RECONCILIATION_REQUIRED")
@@ -689,7 +691,7 @@ async def reconcile_failure_archive(request: Request, task_id: str):
             raise HTTPException(409, detail="TASK_VERSION_CONFLICT")
         current.locator = destination | {"original_cid": operation.evidence["from_cid"]}
         current.output = current.output | {"failure_archive_result": "SUCCEEDED"}
-        session.get(Operation, "failed-archive:" + task_id).status = "COMPLETED"
+        session.get(Operation, key).status = "COMPLETED"
         audit(request, session, "FAILURE_ARCHIVE_RECONCILED", task_id)
     return {"operation_id": task_id, "status": "verified_in_destination"}
 
@@ -718,6 +720,8 @@ async def reprocess_task(request: Request, task_id: str):
         if pending:
             raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
         task = previous
+        from app.services.execution import begin_execution
+        begin_execution(session, task)
         task.state, task.stage = "READY", (
             "document_copy" if document else "cloud_prepare" if task.source == "115"
             else "local_extract"

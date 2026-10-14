@@ -1,4 +1,4 @@
-export async function api<T = any>(path: string, body?: unknown, method?: string): Promise<T> {
+export async function api<T = any>(path: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = {}
   const token = sessionStorage.getItem('115work-token')
   const csrf = sessionStorage.getItem('115work-csrf')
@@ -10,11 +10,15 @@ export async function api<T = any>(path: string, body?: unknown, method?: string
     response = await fetch(path, {
     method: method || (body === undefined ? 'GET' : 'POST'),
     credentials: 'same-origin',
+    signal,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
     })
-  } catch {
-    throw new Error('无法连接后台，操作结果尚未确认。请恢复连接后刷新核对，不要连续重复操作。')
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') throw error
+    throw new Error(body === undefined && (!method || method === 'GET')
+      ? '详情或数据加载失败，无法连接后台，请稍后重试。'
+      : '无法连接后台，操作结果尚未确认。请恢复连接后刷新核对，不要连续重复操作。')
   }
   const data = await response.json()
   if (!response.ok) throw new Error(errorLabel(data.error?.code || 'REQUEST_FAILED'))
@@ -87,7 +91,7 @@ export function errorLabel(value: string) {
 export const stageNames: Record<string, string> = {
   offline_submit: '提交离线', offline_download: '离线下载', discover: '等待发现文件',
   cloud_prepare: '等待云解压', cloud_inspect: '云解压分析', cloud_output: '准备云端输出',
-  cloud_progress: '云解压进行中', cloud_verify: '云端结果校验', cloud_export_unknown: '提交结果核对',
+  cloud_progress: '云解压进行中', cloud_verify: '确认云端完成', cloud_export_unknown: '提交结果核对',
   cloud_password: '等待密码', local_fallback: '本地兜底待批准', cache: '缓存文件',
   local_extract: '本地解压', local_capability: '等待解压能力', registered: '文件登记', complete: '完成',
   document_copy: '文档处理', postprocess: '原包后处理', join: '多个关联产物',
@@ -114,6 +118,8 @@ export function textLabel(value: string) {
   if (!value || !/[a-z]/i.test(value)) return value
   if (/[\u4e00-\u9fff]/.test(value)) return value
   const events: Record<string, string> = {
+    remote_reported_complete: '115报告解压完成（未全量核对）',
+    remote_manifest: '云端文件清单核对通过',
     CLOUD_ROOT_INITIALIZED: '云目录初始化', LIFE_CHECKED: '生活事件检查',
     SCAN_COMPLETED: '云目录扫描完成', LOCAL_SCAN_COMPLETED: '本地扫描完成',
     DISCOVERY_SCHEDULED: '离线目录扫描排队', DUPLICATE_SKIPPED: '重复资源已跳过',

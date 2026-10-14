@@ -26,10 +26,7 @@ watch(() => system.status?.updated_at, () => {
   liveRefresh = setTimeout(async () => {
     if (loading.value || !system.autoRefresh) return
     await load(true)
-    if (detailOpen.value && detail.value?.id) {
-      try { detail.value = await api('/api/v1/tasks/' + detail.value.id) }
-      catch { /* Keep the last visible evidence during a transient refresh failure. */ }
-    }
+    if (detailOpen.value && detail.value?.id && !detailBusy.value) await refreshDetail()
   }, 300)
 })
 onBeforeUnmount(() => clearTimeout(liveRefresh))
@@ -64,6 +61,51 @@ const autoExtract = ref(true)
 const upload = ref<File | null>(null)
 const detail = ref<any>(null)
 const detailOpen = ref(false)
+const detailBusy = ref(false)
+const detailError = ref('')
+const fileOffset = ref(0)
+let detailRequest: AbortController | undefined
+watch(detailOpen, opened => { if (!opened) { detailRequest?.abort(); detailBusy.value = false } })
+onBeforeUnmount(() => detailRequest?.abort())
+async function refreshDetail(mode: 'summary' | 'evidence' | 'older' | 'files' = 'summary') {
+  if (!detail.value?.id || detailBusy.value) return
+  const id = detail.value.id
+  const controller = new AbortController()
+  detailRequest = controller
+  detailBusy.value = true
+  detailError.value = ''
+  const cursor = mode === 'older' ? detail.value.events?.[0]?.id : 0
+  try {
+    const result = await api('/api/v1/tasks/' + id + (mode === 'summary'
+      ? '?summary=true' : '?event_limit=50&before_event=' + (cursor || 0) +
+        '&files=' + (mode !== 'older') + '&file_offset=' + (mode === 'files' ? fileOffset.value + 200 : 0)), undefined, 'GET', controller.signal)
+    if (!detailOpen.value || detail.value?.id !== id) return
+    const newExecution = detail.value.policy?.execution_generation !== result.policy?.execution_generation
+    const output = newExecution ? { ...result.output } : { ...detail.value.output, ...result.output }
+    if (newExecution) {
+      detail.value.events = []
+      detail.value.steps = []
+      detail.value.file_counts = undefined
+      detail.value.files_more = false
+      fileOffset.value = 0
+    }
+    if (mode === 'files') {
+      for (const key of ['expected_manifest', 'actual_manifest', 'cleanup_deleted']) {
+        if (result.output[key]) output[key] = [...(detail.value.output[key] || []), ...result.output[key]]
+      }
+      fileOffset.value += 200
+      delete result.events
+      delete result.events_more
+    }
+    if (mode === 'evidence') fileOffset.value = 0
+    if (mode === 'older') result.events = [...result.events, ...(detail.value.events || [])]
+    Object.assign(detail.value, result, { output })
+  } catch (cause) {
+    if ((cause as Error).name !== 'AbortError' && detail.value?.id === id) detailError.value = (cause as Error).message
+  } finally {
+    if (detailRequest === controller) detailBusy.value = false
+  }
+}
 const sourceOpen = ref(false)
 const editingSource = ref<any>(null)
 const mappingOpen = ref(false)
@@ -183,10 +225,12 @@ async function importLinks() {
   } catch (cause) { error.value = (cause as Error).message }
 }
 async function showTask(task: any) {
-  try {
-    detail.value = await api('/api/v1/tasks/' + task.id)
-    detailOpen.value = true
-  } catch (cause) { error.value = (cause as Error).message }
+  detailRequest?.abort()
+  detailBusy.value = false
+  fileOffset.value = 0
+  detail.value = { ...task, output: { ...task.output }, events: [], steps: [] }
+  detailOpen.value = true
+  await refreshDetail()
 }
 async function saveSource() {
   const value = newSource.value
@@ -419,7 +463,20 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       </div>
     </template>
 
-    <v-dialog v-model="detailOpen" max-width="760"><v-card class="detail-card"><header class="dialog-heading"><h2>{{ detail?.name }}</h2><v-btn icon variant="text" aria-label="关闭详情" @click="detailOpen = false"><X :size="20" /></v-btn></header><v-card-text v-if="detail"><dl class="health-list"><div><dt>状态</dt><dd>{{ stateLabel(detail.state) }}</dd></div><div><dt>阶段</dt><dd>{{ stageLabel(detail.stage) }}</dd></div><div><dt>来源</dt><dd>{{ stateLabel(detail.source) }}</dd></div><div><dt>文件大小</dt><dd>{{ bytes(detail.size) }}</dd></div><div><dt>业务尝试</dt><dd>{{ detail.attempts }}</dd></div><div><dt>输出</dt><dd class="path-cell">{{ detail.output.path || detail.output.cid || '-' }}</dd></div><div v-if="detail.error"><dt>错误</dt><dd class="error-text">{{ errorLabel(detail.error) }}</dd></div></dl><TaskEvidence :task="detail" /><h3 class="mt-5 mb-3">任务时间线</h3><div v-for="event in detail.events" :key="event.id" class="timeline-row"><span class="event-dot" /><div><strong>{{ stageLabel(event.stage) }}</strong><p>{{ textLabel(event.message) }}</p><small>{{ date(event.created_at) }}</small></div></div></v-card-text></v-card></v-dialog>
+    <v-dialog v-model="detailOpen" max-width="760"><v-card class="detail-card">
+      <header class="dialog-heading"><h2>{{ detail?.name }}</h2><v-btn icon variant="text" aria-label="关闭详情" @click="detailOpen = false"><X :size="20" /></v-btn></header>
+      <v-progress-linear v-if="detailBusy" indeterminate height="2" />
+      <v-card-text v-if="detail">
+        <div v-if="detailError" role="alert" class="error-text">{{ detailError }}<v-btn variant="text" :disabled="detailBusy" @click="refreshDetail()"><RotateCcw :size="16" class="mr-2" />重新加载</v-btn></div>
+        <dl class="health-list"><div><dt>状态</dt><dd>{{ stateLabel(detail.state) }}</dd></div><div><dt>阶段</dt><dd>{{ stageLabel(detail.stage) }}</dd></div><div><dt>来源</dt><dd>{{ stateLabel(detail.source) }}</dd></div><div><dt>文件大小</dt><dd>{{ bytes(detail.size) }}</dd></div><div><dt>业务尝试</dt><dd>{{ detail.attempts }}</dd></div><div><dt>输出</dt><dd class="path-cell">{{ detail.output.path || detail.output.cid || '-' }}</dd></div><div v-if="detail.error"><dt>错误</dt><dd>{{ errorLabel(detail.error) }}</dd></div></dl>
+        <TaskEvidence :task="detail" />
+        <v-btn class="mt-5" variant="outlined" :disabled="detailBusy" @click="refreshDetail('evidence')"><Eye :size="16" class="mr-2" />查看日志与文件清单</v-btn>
+        <v-btn v-if="detail.files_more" :disabled="detailBusy" variant="text" @click="refreshDetail('files')">加载更多文件</v-btn>
+        <h3 v-if="detail.events?.length" class="mt-5 mb-3">任务时间线</h3>
+        <div v-for="event in detail.events" :key="event.id" class="timeline-row"><span class="event-dot" /><div><strong>{{ stageLabel(event.stage) }}</strong><p>{{ textLabel(event.message) }}</p><small>{{ date(event.created_at) }}</small></div></div>
+        <v-btn v-if="detail.events_more" :disabled="detailBusy" variant="text" @click="refreshDetail('older')">加载更早日志</v-btn>
+      </v-card-text>
+    </v-card></v-dialog>
     <v-dialog v-model="sourceOpen" max-width="560"><v-card>
       <header class="dialog-heading"><h2>{{ editingSource ? '编辑来源' : '添加来源' }}</h2><v-btn icon variant="text" aria-label="关闭" @click="sourceOpen = false"><X :size="20" /></v-btn></header>
       <v-card-text><v-form @submit.prevent="saveSource" class="dialog-form">

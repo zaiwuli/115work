@@ -13,6 +13,7 @@ from pathlib import PurePosixPath
 from app.persistence.models import Identity, Operation, Resource, Settings, Task
 from app.scheduler.store import enqueue
 from app.services.events import record, transition
+from app.services.execution import operation_scope
 
 
 ARCHIVE_SUFFIXES = (".zip", ".rar", ".7z", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz",
@@ -302,7 +303,7 @@ class ArchiveService:
             if task.stage == "cloud_prepare":
                 passwords = [""] + [self.secrets.decrypt(x) for x in settings["passwords"]]
                 password = passwords[min(task.password_attempts, len(passwords) - 1)]
-                key = f"cloud-prepare:{task_id}:{task.attempts + 1}:{task.password_attempts}"
+                key = f"cloud-prepare:{operation_scope(task)}:{task.attempts + 1}:{task.password_attempts}"
                 with self.db.session() as session:
                     self.store.owned(session, job)
                     current = session.get(Task, task_id)
@@ -326,12 +327,6 @@ class ArchiveService:
                 state = await self.adapter.inspect_extract(file["pickcode"])
                 return await self._preparation_result(job, state)
             if task.stage == "cloud_output":
-                expected = task.output.get("expected_manifest")
-                if expected is None:
-                    expected = await self.adapter.archive_manifest(file["pickcode"])
-                    with self.db.session() as session:
-                        self.store.owned(session, job)
-                        session.get(Task, task_id).output = task.output | {"expected_manifest": expected}
                 output_cid = task.output.get("cid")
                 if not output_cid:
                     from app.services.folders import durable_folder, output_folder
@@ -348,8 +343,8 @@ class ArchiveService:
                     )
                     with self.db.session() as session:
                         self.store.owned(session, job)
-                        session.get(Task, task_id).output = {"cid": output_cid, "expected_manifest": expected}
-                key = f"cloud-export:{task_id}:{task.attempts}"
+                        session.get(Task, task_id).output = {"cid": output_cid}
+                key = f"cloud-export:{operation_scope(task)}:{task.attempts}"
                 with self.db.session() as session:
                     self.store.owned(session, job)
                     operation = session.get(Operation, key)
@@ -400,29 +395,10 @@ class ArchiveService:
                         transition(session, session.get(Task, task_id), "RECONCILING",
                                    "cloud_verify", error="OUTPUT_VERIFICATION_DEADLINE")
                     return None
-                actual = await self.adapter.output_manifest(task.output["cid"])
-                expected = task.output.get("expected_manifest", [])
                 with self.db.session() as session:
                     self.store.owned(session, job)
                     current = session.get(Task, task_id)
-                    if not actual:
-                        transition(session, current, "RECONCILING", "cloud_verify",
-                                   error="OUTPUT_NOT_VISIBLE")
-                        return time.time() + 300
-                    expected_by_path = {x["path"]: x["size"] for x in expected}
-                    actual_by_path = {x["path"]: x["size"] for x in actual}
-                    verified = bool(expected) and expected_by_path.keys() == actual_by_path.keys() and all(
-                        size is None or actual_by_path[path] == size for path, size in expected_by_path.items()
-                    )
-                    if not expected or not verified:
-                        transition(session, current, "RECONCILING", "cloud_verify",
-                                   error="REMOTE_MANIFEST_MISMATCH" if expected else "EXPECTED_MANIFEST_REQUIRED")
-                        return time.time() + 300
-                    full_sizes = verified and all(x["size"] is not None for x in expected)
-                    current.output = task.output | {"verification": "remote_manifest" if full_sizes else
-                                                   "remote_manifest_names" if verified else
-                                                   "remote_completed_and_visible",
-                                                   "actual_manifest": actual}
+                    current.output = task.output | {"verification": "remote_reported_complete"}
                     transition(session, current, "CANCELED" if current.cancel_requested else "SUCCEEDED", "complete")
                     session.merge(Identity(key=current.content_key, task_id=task_id, result="success"))
                     session.merge(Settings(key="cloud_active", value={"value": ""}))
@@ -439,12 +415,12 @@ class ArchiveService:
                 self.store.owned(session, job)
                 current = session.get(Task, task_id)
                 if exc.uncertain and task.stage == "cloud_output":
-                    export = session.get(Operation, f"cloud-export:{task_id}:{task.attempts}")
+                    export = session.get(Operation, f"cloud-export:{operation_scope(task)}:{task.attempts}")
                     transition(session, current, "RECONCILING",
                                "cloud_export_unknown" if export else "cloud_output", error=exc.code)
                     return None
                 if not exc.uncertain and task.stage == "cloud_output" and exc.code == "REMOTE_REJECTED":
-                    operation = session.get(Operation, f"cloud-export:{task_id}:{task.attempts}")
+                    operation = session.get(Operation, f"cloud-export:{operation_scope(task)}:{task.attempts}")
                     if operation:
                         operation.status = "REJECTED"
                     session.merge(Settings(key="cloud_active", value={"value": ""}))

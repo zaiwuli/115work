@@ -36,16 +36,43 @@ class OutputCleanup:
             if not extensions or task.state != "SUCCEEDED" or task.cancel_requested:
                 raise ValueError("VERIFIED_OUTPUT_REQUIRED")
             local = bool(task.output.get("path"))
-            if task.output.get("verification") not in {"sha256_manifest", "remote_manifest"}:
+            if task.output.get("verification") not in {"sha256_manifest", "remote_manifest", "remote_reported_complete"}:
                 raise ValueError("VERIFIED_OUTPUT_REQUIRED")
+            directory_cache = {}
             if local:
                 manifest = json.loads(Path(task.output["manifest"]).read_text(encoding="utf-8"))
                 entries = manifest["files"]
             else:
-                entries = task.output["actual_manifest"]
+                entries = task.output.get("cleanup_manifest")
+                if entries is None:
+                    from app.services.cloud_flatten import listing
+                    queue, entries, visited = [(task.output["cid"], "")], [], set()
+                    while queue:
+                        cid, prefix = queue.pop(0)
+                        if cid in visited or len(visited) >= 1000:
+                            raise ValueError("OUTPUT_MANIFEST_BUDGET")
+                        visited.add(cid)
+                        page = await listing(self.adapter, cid)
+                        directory_cache[cid] = page
+                        for file in page:
+                            path = str(PurePosixPath(prefix) / file.name)
+                            if file.is_dir:
+                                if task.policy.get("cleanup_recursive", True):
+                                    queue.append((file.fid, path))
+                            else:
+                                entries.append({"path": path, "size": file.size,
+                                                "fid": file.fid, "cid": cid, "sha1": file.sha1})
+                            if len(entries) + len(queue) > 10000:
+                                raise ValueError("OUTPUT_MANIFEST_BUDGET")
+                    with self.db.session() as session:
+                        self.store.owned(session, job)
+                        current = session.get(Task, task.id)
+                        current.output = current.output | {
+                            "cleanup_manifest": entries, "actual_manifest": entries,
+                            "manifest_source": "suffix_cleanup",
+                        }
             matched = [x for x in entries if PurePosixPath(x["path"]).suffix.lower() in extensions
                        and (task.policy.get("cleanup_recursive", True) or "/" not in x["path"])]
-            directory_cache = {}
             for entry in matched:
                 relative = PurePosixPath(entry["path"])
                 if relative.is_absolute() or ".." in relative.parts or "\\" in entry["path"]:
@@ -87,7 +114,7 @@ class OutputCleanup:
                                 raise ValueError("OUTPUT_PATH_CHANGED")
                             cid = file.fid
                     if file is not None:
-                        if file.is_dir or file.size != entry["size"]:
+                        if file.is_dir or (entry.get("size") is not None and file.size != entry["size"]):
                             raise ValueError("OUTPUT_VERSION_CHANGED")
                         if any(entry.get(key) and entry[key] != value for key, value in (
                             ("fid", file.fid), ("cid", cid), ("sha1", file.sha1),

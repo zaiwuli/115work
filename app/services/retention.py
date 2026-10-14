@@ -10,6 +10,7 @@ from sqlalchemy import select
 from app.domain.paths import contained
 from app.persistence.models import CacheEntry, Operation, Rule, Task
 from app.services.events import record
+from app.services.execution import operation_scope
 
 
 def digest(path):
@@ -35,7 +36,7 @@ class RetentionService:
             cid = task.policy.get("cloud_failed_cid")
             if not cid or cid == task.locator["cid"]:
                 raise ValueError("FAILED_ARCHIVE_CID_REQUIRED")
-            key = "failed-archive:" + task.id
+            key = "failed-archive:" + operation_scope(task)
             operation = session.get(Operation, key)
             if operation:
                 raise ValueError("FAILED_ARCHIVE_REQUIRES_RECONCILIATION")
@@ -106,9 +107,9 @@ class RetentionService:
                     if not await asyncio.to_thread(LocalService.verify_manifest,
                                                    Path(task.output["path"]), manifest):
                         raise ValueError("OUTPUT_MANIFEST_MISMATCH")
-                elif verification != "remote_manifest":
+                elif verification not in {"remote_manifest", "remote_reported_complete"}:
                     raise ValueError("STRONG_REMOTE_OUTPUT_VERIFICATION_REQUIRED")
-                key = f"retain:{task.id}:115:{action}"
+                key = f"retain:{operation_scope(task)}:115:{action}"
                 with self.db.session() as session:
                     self.store.owned(session, job)
                     operation = session.get(Operation, key)
@@ -143,7 +144,7 @@ class RetentionService:
                     raise ValueError("OUTPUT_MANIFEST_MISMATCH")
                 for part in task.locator.get("parts", [task.locator]):
                     source = contained(Path(task.locator["root"]), Path(part["path"]))
-                    key = f"retain:{task.id}:{source.name}:{action}"
+                    key = f"retain:{operation_scope(task)}:{source.name}:{action}"
                     with self.db.session() as session:
                         self.store.owned(session, job)
                         operation = session.get(Operation, key)

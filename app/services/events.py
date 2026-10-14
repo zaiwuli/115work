@@ -3,7 +3,7 @@ import re
 
 from sqlalchemy import select
 
-from app.persistence.models import Event, Locator, Outbox, Resource, Settings, Step
+from app.persistence.models import Event, Locator, Outbox, Resource, Settings, Step, Task
 from app.domain.state import validate_transition
 
 
@@ -22,6 +22,9 @@ def record(session, task_id: str, kind: str, stage: str, message: str, category:
                 Event.task_id == task_id, Event.id != event.id,
                 Outbox.category == category,
             )
+            task = session.get(Task, task_id)
+            if task:
+                prior = prior.where(Event.id > task.policy.get("execution_event_cutoff", 0))
             if any(notification_group(previous) == group for previous in session.scalars(prior)):
                 return event
         enabled = session.get(Settings, "notification_" + category)
@@ -42,7 +45,7 @@ def transition(session, task, state: str, stage: str, *, error: str = "", manual
     category = "cloud" if task.source == "115" else "local"
     if state == "SUCCEEDED" and (task.policy.get("cleanup_enabled") or (
         task.source == "115" and task.policy.get("squash_root", True)
-        and task.output.get("verification") == "remote_manifest"
+        and task.output.get("verification") in {"remote_manifest", "remote_reported_complete"}
     )):
         category = ""
     record(session, task.id, state, stage, error or stage, category)
@@ -53,7 +56,8 @@ def track_step(session, task, prior_stage, state, stage, error=""):
                               .order_by(Step.updated_at.desc()))
     if previous and prior_stage != stage and previous.state not in {"FAILED", "CANCELED"}:
         previous.state, previous.updated_at = ("FAILED" if error else "SUCCEEDED"), time.time()
-    key = f"{task.id}:{stage}:{task.attempts}"
+    from app.services.execution import operation_scope
+    key = f"{operation_scope(task)}:{stage}:{task.attempts}"
     step = session.scalar(select(Step).where(Step.operation_key == key))
     if not step:
         step = Step(operation_key=key, task_id=task.id, kind=stage,

@@ -2,6 +2,7 @@ from pathlib import PurePosixPath
 
 from app.persistence.models import Operation, Task
 from app.services.events import record
+from app.services.execution import operation_scope
 
 
 async def listing(adapter, cid):
@@ -25,10 +26,12 @@ async def flatten(db, store, adapter, task, job):
     root = task.output["cid"]
     name = PurePosixPath(task.name).stem[:80]
     try:
-        if task.state != "SUCCEEDED" or task.cancel_requested or task.output.get("verification") != "remote_manifest":
+        if task.state != "SUCCEEDED" or task.cancel_requested or task.output.get("verification") not in {
+            "remote_manifest", "remote_reported_complete",
+        }:
             raise ValueError("VERIFIED_OUTPUT_REQUIRED")
         for depth in range(10):
-            key = f"flatten:{task.id}:{depth}"
+            key = f"flatten:{operation_scope(task)}:{depth}"
             with db.session() as session:
                 store.owned(session, job)
                 operation = session.get(Operation, key)
@@ -91,15 +94,28 @@ async def flatten(db, store, adapter, task, job):
                     raise ValueError("FLATTEN_REQUIRES_RECONCILIATION")
             with db.session() as session:
                 session.get(Operation, key).status = "COMPLETED"
+                current = session.get(Task, task.id)
+                prefixes = ["/".join([name] * count) + "/" for count in range(len(evidence.get("folders", [])), 0, -1)]
+                def remap(entries):
+                    result = []
+                    for entry in entries:
+                        path = next((entry["path"][len(prefix):] for prefix in prefixes
+                                     if entry["path"].startswith(prefix)), entry["path"])
+                        result.append(entry | {"path": path} | (
+                            {"cid": root} if "/" not in path and "cid" in entry else {}))
+                    return result
+                current.output = current.output | {
+                    "expected_manifest": remap(current.output.get("expected_manifest") or []),
+                    **({"actual_manifest": remap(current.output["actual_manifest"])}
+                       if "actual_manifest" in current.output else {}),
+                }
                 record(session, task.id, "OUTPUT_ROOT_FLATTENED", "output_flatten",
                        "同名文件夹已提层：" + name)
         else:
             raise ValueError("OUTPUT_FLATTEN_DEPTH_LIMIT")
-        actual = await adapter.output_manifest(root)
         with db.session() as session:
             current = session.get(Task, task.id)
-            current.output = current.output | {"actual_manifest": actual,
-                                               "flatten_result": "SUCCEEDED",
+            current.output = current.output | {"flatten_result": "SUCCEEDED",
                                                "flatten_error": ""}
     except Exception as exc:
         with db.session() as session:

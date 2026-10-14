@@ -10,7 +10,7 @@ DEFAULT_TEMPLATE = "{{icon}} {{title}}\n{{separator}}\n⏱️ 时间：{{time}}\
 STAGE_TITLES = {
     "cloud_prepare": "准备云解压", "cloud_inspect": "检查压缩包内容",
     "cloud_output": "云端导出解压文件", "cloud_export_unknown": "云解压结果等待核对",
-    "cloud_progress": "云端解压中", "cloud_verify": "验证云解压产物",
+    "cloud_progress": "云端解压中", "cloud_verify": "确认云端完成",
     "cloud_password": "等待压缩密码", "local_fallback": "等待确认本地解压",
     "local_extract": "本地解压中", "output_cleanup": "清理解压产物",
     "output_flatten": "同名文件夹提层", "registered": "文件登记",

@@ -165,17 +165,49 @@ def list_tasks(request: Request, state: str = "", source: str = "", q: str = "",
 
 
 @secured.get("/api/v1/tasks/{task_id}")
-def task_detail(request: Request, task_id: str):
+def task_detail(request: Request, task_id: str, summary: bool = False,
+                before_event: int = 0, event_limit: int = 50, files: bool = True,
+                file_offset: int = 0):
     with request.app.state.db.session() as session:
         task = session.get(Task, task_id)
         if not task:
             raise HTTPException(404, detail="TASK_NOT_FOUND")
-        events = session.scalars(select(Event).where(Event.task_id == task_id).order_by(Event.id))
-        steps = session.scalars(select(Step).where(Step.task_id == task_id).order_by(Step.updated_at))
+        result = serialize(task)
+        removed = set(task.output.get("cleanup_deleted", []))
+        result["output"] = dict(result["output"]) | {"cleanup_deleted_count": len(removed)}
+        if summary or not files:
+            result["output"] = {key: value for key, value in result["output"].items()
+                                if key not in {"expected_manifest", "actual_manifest", "cleanup_deleted", "cleanup_manifest"}}
+        else:
+            offset = max(0, file_offset)
+            result["output"].pop("cleanup_manifest", None)
+            counts = {}
+            for key in ("expected_manifest", "actual_manifest", "cleanup_deleted"):
+                values = task.output.get(key, [])
+                counts[key] = len(values)
+                if key in task.output:
+                    result["output"][key] = values[offset:offset + 200]
+                    if key == "actual_manifest":
+                        result["output"][key] = [
+                            entry | {"cleanup_removed": entry["path"] in removed}
+                            for entry in result["output"][key]
+                        ]
+            result["file_counts"] = counts
+            result["files_more"] = any(count > offset + 200 for count in counts.values())
         transfer = session.get(Transfer, task_id)
-        return serialize(task) | {"events": [serialize(x) for x in events],
-                                  "steps": [serialize(x) for x in steps],
-                                  "transfer": serialize(transfer) if transfer else None}
+        result["transfer"] = serialize(transfer) if transfer else None
+        if summary:
+            return result
+        query = select(Event).where(Event.task_id == task_id)
+        if before_event:
+            query = query.where(Event.id < before_event)
+        limit = min(100, max(1, event_limit))
+        events = list(session.scalars(query.order_by(Event.id.desc()).limit(limit + 1)))
+        steps = session.scalars(select(Step).where(Step.task_id == task_id)
+                                .order_by(Step.updated_at.desc()).limit(100))
+        return result | {"events": [serialize(x) for x in reversed(events[:limit])],
+                         "events_more": len(events) > limit,
+                         "steps": [serialize(x) for x in steps]}
 
 
 def task_command(request, task_id, action, expected_version=None):
@@ -199,6 +231,8 @@ def task_command(request, task_id, action, expected_version=None):
         elif action == "retry":
             if task.state != "FAILED":
                 raise HTTPException(409, detail="ONLY_FAILED_TASK_CAN_RETRY")
+            from app.services.execution import begin_execution
+            begin_execution(session, task)
             transition(session, task, "READY", task.stage, manual_retry=True)
             identity = session.get(Identity, task.content_key)
             if identity:
