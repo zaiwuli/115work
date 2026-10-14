@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import select
 
 from app.adapters.p115 import AdapterError
-from app.persistence.models import Offline, Settings, Source
+from app.persistence.models import DateFolder, Offline, Settings, Source
 from app.scheduler.store import enqueue
 from app.services.events import record
 from app.services.folders import durable_folder
@@ -59,6 +59,8 @@ class CloudMonitor:
                 Offline.status.not_in(["failed", "submit_failed", "canceled"]),
                 Offline.target_cid != "",
             )))
+            date_cids = set(session.scalars(select(DateFolder.cid).where(
+                DateFolder.root_cid == settings.get("offline_root_cid"))))
         now = time.time()
         started = settings.get("life_monitor_started") or now
         since = max(started, checkpoint.get("checked", started))
@@ -109,7 +111,16 @@ class CloudMonitor:
             if len(matched) > 1:
                 matched.sort(key=lambda source: path.index(source.config["cid"]), reverse=True)
             relevant_offline = [item for item in offline if item.target_cid in ancestors]
-            if matched:
+            offline_root = settings.get("offline_root_cid")
+            if offline_root and offline_root != "0" and offline_root in ancestors:
+                targets[parent] = {"cid": parent, "offline_only": False,
+                                   "source_id": "115-offline", "one_shot": True,
+                                   "reason": "生活事件：离线目录变化"}
+            elif ancestors & date_cids:
+                targets[parent] = {"cid": parent, "offline_only": False,
+                                   "source_id": "115-offline", "one_shot": True,
+                                   "reason": "生活事件：离线日期目录变化"}
+            elif matched:
                 targets[parent] = {"cid": parent, "offline_only": False,
                                    "source_id": matched[0].id, "one_shot": True,
                                    "reason": "生活事件：文件移入或新增"}

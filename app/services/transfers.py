@@ -113,6 +113,7 @@ class TransferService:
             if saved.attempts >= 5:
                 raise ValueError("TRANSFER_RETRY_EXHAUSTED")
             current_task = session.get(Task, task.id)
+            saved.state, saved.error = "RUNNING", ""
             transition(session, current_task, "RUNNING",
                        "document_copy" if current_task.stage == "document_copy" else "cache")
         offset = part.stat().st_size if part.exists() else 0

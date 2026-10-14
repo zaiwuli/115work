@@ -8,6 +8,7 @@ from app.persistence.models import Rule
 
 DOCUMENT_SUFFIXES = {".pdf", ".docx", ".xlsx", ".pptx", ".txt", ".md", ".csv", ".json",
                      ".jpg", ".jpeg", ".png", ".webp"}
+OFFLINE_SOURCE = "115-offline"
 
 
 def evaluate(session, source_id: str, name: str, size: int) -> dict:
@@ -26,6 +27,8 @@ def evaluate(session, source_id: str, name: str, size: int) -> dict:
         if size < config.get("min_size", 0) or size > config.get("max_size", 2**63 - 1):
             continue
         selected.append(rule)
+    specific = [rule for rule in selected if rule.source_id == source_id and source_id]
+    selected = specific or selected
     if len(selected) > 1:
         raise ValueError("AMBIGUOUS_RULE")
     if not selected:

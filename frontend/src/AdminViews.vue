@@ -114,7 +114,7 @@ async function save() {
       credential: credential.value })
   } else if (view.value === 'rules') {
     const config = { pattern: pattern.value, original_action: originalAction.value,
-      document_action: documentAction.value, workflow: workflow.value, auto_fallback: false,
+      document_action: documentAction.value, workflow: workflow.value, auto_fallback: autoFallback.value,
       document_links: documentLinks.value,
       disable_recursion: disableRecursion.value, recurse_iso: recurseIso.value,
       squash_root: squashRoot.value,
@@ -190,7 +190,7 @@ watch(() => system.refreshVersion, () => void load())
 
     <template v-else-if="view === 'rules'">
       <div class="table-wrap"><table><thead><tr><th>规则</th><th>来源</th><th>匹配</th><th>流程</th><th>原包策略</th><th>操作</th></tr></thead><tbody>
-        <tr v-for="item in items" :key="item.id"><td><strong>{{ item.name }}</strong><small>版本 {{ item.revision }}</small></td><td>{{ item.source_id ? sources.find(x => x.id === item.source_id)?.name || '已删除来源' : '所有来源' }}</td><td>{{ item.config.pattern || '*' }}</td><td>{{ stateLabel(item.config.workflow || 'auto') }}</td><td>{{ stateLabel(item.config.original_action || 'retain') }}</td>
+        <tr v-for="item in items" :key="item.id"><td><strong>{{ item.name }}</strong><small>版本 {{ item.revision }}</small></td><td>{{ item.source_id === '115-offline' ? '115离线下载' : item.source_id ? sources.find(x => x.id === item.source_id)?.name || '已删除来源' : '所有来源' }}</td><td>{{ item.config.pattern || '*' }}</td><td>{{ stateLabel(item.config.workflow || 'auto') }}</td><td>{{ stateLabel(item.config.original_action || 'retain') }}</td>
           <td><div v-if="canWrite" class="row-actions"><button class="file-link" aria-label="编辑规则" title="编辑规则" @click="open(item)"><Save :size="17" /></button><button aria-label="删除规则" title="删除规则" @click="deletingRule = item"><Trash2 :size="17" /></button></div></td></tr>
       </tbody></table><div v-if="!items.length" class="empty"><Archive :size="32" /><span>暂无规则</span></div></div>
       <section v-if="canWrite" class="settings-section"><h2>规则预览</h2><div class="form-grid"><v-text-field v-model="previewName" label="文件名" /><v-btn variant="outlined" :disabled="!previewName" @click="command('/api/v1/rules/preview', { name: previewName, size: 0, source_id: sourceId }).then(x => preview = x)"><Search :size="17" class="mr-2" />预览</v-btn></div><p v-if="preview" class="mono mt-4">{{ stateLabel(preview.policy.workflow || 'auto') }}</p></section>
@@ -221,7 +221,7 @@ watch(() => system.refreshVersion, () => void load())
     <v-dialog v-model="opened" max-width="600"><v-card><header class="dialog-heading"><h2>{{ editing ? '编辑' : '添加' }}{{ titles[view] }}</h2><v-btn icon variant="text" aria-label="关闭" @click="opened = false"><X :size="20" /></v-btn></header>
       <v-card-text><v-form class="dialog-form" @submit.prevent="editing && view === 'connections' ? saveCredentials() : save()">
         <template v-if="view === 'connections'"><v-text-field v-if="!editing" v-model="name" label="连接名称" /><v-select v-if="!editing" v-model="kind" :items="[{ title: '115 Cookie', value: '115' }]" label="类型" /><v-text-field v-if="!editing && kind === '115'" v-model="directory" label="根 CID" /><v-text-field v-model="credential" type="password" label="115 Cookie" autocomplete="off" /></template>
-        <template v-else><v-text-field v-model="name" label="名称" /><v-select v-model="sourceId" :items="[{ title: '所有来源', value: '' }, ...sources.map(x => ({ title: x.name, value: x.id }))]" label="来源" aria-label="来源" />
+        <template v-else><v-text-field v-model="name" label="名称" /><v-select v-model="sourceId" :items="[{ title: '所有来源', value: '' }, ...(view === 'rules' ? [{ title: '115离线下载', value: '115-offline' }] : []), ...sources.map(x => ({ title: x.name, value: x.id }))]" label="来源" aria-label="来源" />
           <template v-if="view === 'rules'">
             <v-text-field v-model="pattern" label="文件名模式" />
             <v-select v-model="workflow" :items="[{ title: '自动', value: 'auto' }, { title: '本地', value: 'local' }, { title: '云端', value: 'cloud' }, { title: '忽略', value: 'ignore' }]" label="工作流" />
@@ -229,6 +229,7 @@ watch(() => system.refreshVersion, () => void load())
             <v-select v-model="documentAction" :items="[{ title: '只读登记', value: 'register' }, { title: '复制', value: 'copy' }, { title: '归档', value: 'archive' }]" label="普通文档" />
             <v-switch v-model="disableRecursion" label="禁止递归解压" color="primary" />
             <v-switch v-model="squashRoot" label="同名文件夹提层" color="primary" />
+            <v-switch v-model="autoFallback" label="云解压失败后自动下载到本地" color="primary" />
             <v-switch v-model="cleanupEnabled" label="解压后删除指定后缀文件" color="primary" />
             <template v-if="cleanupEnabled">
               <v-text-field v-model="cleanupSuffixes" label="删除后缀（例如 .url, .lnk, .nfo）" />

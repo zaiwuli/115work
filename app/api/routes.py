@@ -159,7 +159,15 @@ def list_tasks(request: Request, state: str = "", source: str = "", q: str = "",
         total = session.scalar(select(func.count()).select_from(query.subquery()))
         items = session.scalars(query.order_by(Task.created_at.desc())
                                .offset((page - 1) * page_size).limit(page_size))
-        return {"items": [serialize(x) for x in items], "total": total, "page": page}
+        from app.services.fallback import can_fallback
+        rows = []
+        for task in items:
+            transfer = session.get(Transfer, task.id)
+            rows.append(serialize(task) | {
+                "can_fallback": can_fallback(task),
+                "transfer": serialize(transfer) if transfer else None,
+            })
+        return {"items": rows, "total": total, "page": page}
 
 
 @secured.get("/api/v1/tasks/{task_id}")
@@ -171,6 +179,8 @@ def task_detail(request: Request, task_id: str, summary: bool = False,
         if not task:
             raise HTTPException(404, detail="TASK_NOT_FOUND")
         result = serialize(task)
+        from app.services.fallback import can_fallback
+        result["can_fallback"] = can_fallback(task)
         removed = set(task.output.get("cleanup_deleted", []))
         result["output"] = dict(result["output"]) | {"cleanup_deleted_count": len(removed)}
         if summary or not files:

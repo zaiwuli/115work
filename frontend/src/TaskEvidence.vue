@@ -7,13 +7,6 @@ const props = defineProps<{ task: any }>()
 const emit = defineEmits<{ updated: [] }>()
 const system = useSystem()
 const deleteConfirmation = ref(false)
-const fallbackConfirmation = ref(false)
-const canFallback = computed(() => props.task.source === '115' && !!props.task.locator?.pickcode && (
-  (props.task.state === 'WAITING_APPROVAL' && props.task.stage === 'local_fallback') ||
-  (props.task.state === 'FAILED' &&
-    ['cloud_prepare', 'cloud_inspect', 'cloud_output', 'cloud_progress', 'cloud_verify'].includes(props.task.stage) &&
-    ['REMOTE_REJECTED', 'CLOUD_CONTENT_FAILED', 'CLOUD_EXPORT_REJECTED'].includes(props.task.error))
-))
 const remoteId = ref('')
 const error = ref('')
 const busy = ref(false)
@@ -65,7 +58,10 @@ async function command(suffix: string, extra: any = {}) {
     <h3>缓存传输</h3>
     <v-progress-linear :model-value="task.transfer.expected_size ? task.transfer.bytes_done / task.transfer.expected_size * 100 : 0" color="primary" height="5" class="my-3" />
     <div class="transfer-summary"><span>{{ bytes(task.transfer.bytes_done) }} / {{ bytes(task.transfer.expected_size) }}</span><span>{{ bytes(task.transfer.speed) }}/s</span><span v-if="task.transfer.eta !== null">{{ Math.ceil(task.transfer.eta) }} 秒</span></div>
+    <p class="mt-2">{{ stateLabel(task.transfer.state) }} · 重试 {{ task.transfer.attempts }} 次</p>
+    <p v-if="task.transfer.error" class="error-text">{{ textLabel(task.transfer.error) }}</p>
   </section>
+  <section v-else-if="task.stage === 'cache'" class="task-evidence"><h3>缓存传输</h3><p>等待下载 / 获取下载地址</p></section>
   <section v-if="task.steps?.length" class="task-evidence">
     <h3>执行步骤</h3>
     <div v-for="step in task.steps" :key="step.id" class="event-line">
@@ -91,9 +87,8 @@ async function command(suffix: string, extra: any = {}) {
       <h3>核对云解压操作</h3>
       <div class="form-grid mt-3"><v-text-field v-model="remoteId" label="远端操作 ID" /><v-btn :disabled="busy || !remoteId" @click="command('/reconcile', { remote_id: remoteId })"><Check :size="17" class="mr-2" />核对</v-btn></div>
     </template>
-    <template v-if="canFallback">
+    <template v-if="task.stage === 'local_fallback' && task.output.failure_archive_result === 'FAILED'">
       <h3>本地解压确认</h3>
-      <v-btn :disabled="busy || ['PENDING','FAILED'].includes(task.output.failure_archive_result)" @click="fallbackConfirmation = true"><Download :size="17" class="mr-2" />下载原包并本地解压</v-btn>
       <v-btn v-if="task.output.failure_archive_result === 'FAILED'" class="ml-3" :disabled="busy" @click="command('/failure-archive/reconcile')"><Check :size="17" class="mr-2" />核对失败归档</v-btn>
     </template>
     <template v-if="['SUCCEEDED','FAILED','CANCELED','SKIPPED'].includes(task.state)">
@@ -102,13 +97,6 @@ async function command(suffix: string, extra: any = {}) {
         <v-btn v-if="task.state === 'SUCCEEDED' && task.source !== 'legacy'" :disabled="busy" color="error" variant="outlined" @click="deleteConfirmation = true"><Trash2 :size="17" class="mr-2" />批准延迟删除原包</v-btn></div>
     </template>
   </section>
-  <v-dialog v-model="fallbackConfirmation" max-width="480">
-    <v-card>
-      <v-card-title class="confirmation-title">确认下载原包并本地解压？</v-card-title>
-      <v-card-text><strong class="path-cell">{{ task.name }}</strong><p class="mt-3">原包将缓存到运行115work的设备，使用本地存储空间和下载流量，完成后执行本任务的处理规则。</p></v-card-text>
-      <v-card-actions><v-spacer /><v-btn variant="text" @click="fallbackConfirmation = false">取消</v-btn><v-btn color="primary" :disabled="busy" @click="fallbackConfirmation = false; command('/commands', { action: 'approve' })">确认下载</v-btn></v-card-actions>
-    </v-card>
-  </v-dialog>
   <v-dialog v-model="deleteConfirmation" max-width="480">
     <v-card>
       <v-card-title class="confirmation-title">确认批准删除原压缩包？</v-card-title>

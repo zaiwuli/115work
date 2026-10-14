@@ -8,12 +8,13 @@ from sqlalchemy import select
 from app.adapters.p115 import AdapterError, CloudFile
 from app.domain.links import match_name
 from app.domain.rules import evaluate
-from app.domain.rules import DOCUMENT_SUFFIXES
+from app.domain.rules import DOCUMENT_SUFFIXES, OFFLINE_SOURCE
 from pathlib import PurePosixPath
 from app.persistence.models import Identity, Operation, Resource, Settings, Task
 from app.scheduler.store import enqueue
 from app.services.events import record, transition
 from app.services.execution import operation_scope
+from app.services.fallback import approve_automatic
 
 
 ARCHIVE_SUFFIXES = (".zip", ".rar", ".7z", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz",
@@ -35,6 +36,16 @@ class ArchiveService:
 
     def adopt(self, session, file: CloudFile, auto_extract: bool = True,
               source_id: str = "", offline_id: str = "") -> Task | None:
+        from app.persistence.models import DateFolder, Offline
+        settings = self.db.settings()
+        offline_directory = source_id == OFFLINE_SOURCE or bool(offline_id) or (
+            bool(settings.get("offline_root_cid")) and file.cid == settings["offline_root_cid"]
+        ) or bool(session.scalar(select(DateFolder.id).where(
+            DateFolder.root_cid == settings.get("offline_root_cid"),
+            DateFolder.cid == file.cid,
+        )))
+        if offline_directory:
+            source_id = OFFLINE_SOURCE
         if not is_archive(file.name):
             from app.persistence.models import Offline, Source
             if not source_id and offline_id:
@@ -100,8 +111,9 @@ class ArchiveService:
             )))
             if len(root_sources) == 1:
                 source = root_sources[0]
-                source_id = source.id
-                policy = evaluate(session, source_id, file.name, file.size)
+                if not offline_directory:
+                    source_id = source.id
+                    policy = evaluate(session, source_id, file.name, file.size)
         matching_offline = [item for item in all_offline
             if match_name(item.name) == match_name(file.name) and
             (not item.size or item.size == file.size)]
@@ -268,6 +280,7 @@ class ArchiveService:
             task.output = task.output | {"failure_archive_result": "PENDING"}
             enqueue(session, "failure-archive:" + task.id, "failure_archive", {"task_id": task.id})
             return None
+        approve_automatic(session, task)
         return None
 
     async def run(self, job) -> float | None:
@@ -433,6 +446,7 @@ class ArchiveService:
                         return None
                     if exc.code == "REMOTE_REJECTED" and not exc.uncertain:
                         self.stop_preparation(session, current, "FAILED", exc.code)
+                        approve_automatic(session, current)
                         return None
                 if exc.uncertain and task.stage == "cloud_output":
                     export = session.get(Operation, f"cloud-export:{operation_scope(task)}:{task.attempts}")

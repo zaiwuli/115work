@@ -60,6 +60,8 @@ class RetentionService:
             session.get(Operation, key).status = "COMPLETED"
             record(session, task.id, "FAILURE_ARCHIVE_SUCCEEDED", "failure_archive",
                    "Original archive moved; local fallback remains independent")
+            from app.services.fallback import approve_automatic
+            approve_automatic(session, current)
         return None
 
     async def run(self, job):
