@@ -78,7 +78,7 @@ onBeforeUnmount(() => { refreshGeneration++; clearTimeout(timer); clearTimeout(e
 <template>
   <v-app>
       <v-navigation-drawer v-model="drawer" width="224" :temporary="$vuetify.display.smAndDown" class="sidebar">
-        <div class="brand"><HardDrive :size="26" /><strong>115work</strong><span>0.1</span></div>
+        <div class="brand"><HardDrive :size="26" /><strong>115work</strong><span :title="system.status?.build_revision">{{ system.status?.build_revision && system.status.build_revision !== 'local' ? system.status.build_revision.slice(0, 7) : system.status?.version || '本地' }}</span></div>
         <div class="nav-caption">工作空间</div>
         <nav aria-label="主导航">
           <button v-for="item in navigation.filter(x => system.status?.role !== 'readonly' || !['security','audit','maintenance','connections','settings','offline'].includes(x.key))" :key="item.key" class="nav-item"

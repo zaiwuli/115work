@@ -107,7 +107,7 @@ def create_app(config: Config | None = None, adapter=None) -> FastAPI:
         finally:
             lock.release()
 
-    app = FastAPI(title="115work", version="0.1.0", lifespan=lifespan,
+    app = FastAPI(title="115work", version=config.version, lifespan=lifespan,
                   docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(RequestLimitMiddleware)
 
@@ -147,7 +147,8 @@ def create_app(config: Config | None = None, adapter=None) -> FastAPI:
     @app.get("/health")
     @app.get("/health/live")
     def live():
-        return {"status": "live", "version": "0.1.0"}
+        return {"status": "live", "version": config.version,
+                "build_revision": config.build_revision, "build_time": config.build_time}
 
     @app.get("/health/ready")
     def ready():

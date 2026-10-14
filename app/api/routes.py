@@ -123,7 +123,10 @@ def system_status(request: Request):
         ))
     settings = db.settings()
     return {
-        "version": "0.1.0", "adapter": request.app.state.config.adapter,
+        "version": request.app.state.config.version,
+        "build_revision": request.app.state.config.build_revision,
+        "build_time": request.app.state.config.build_time,
+        "adapter": request.app.state.config.adapter,
         "role": getattr(request.state, "role", "admin"),
         "local_formats": "ZIP / TAR / 7z / RAR / ISO" if extractor_available(request.app.state.config) else "ZIP / TAR",
         "extract_engine": request.app.state.config.extract_engine,

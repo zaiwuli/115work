@@ -15,6 +15,12 @@ WORKDIR /build/extractor
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /build/115work-extract .
 
 FROM python:3.12-slim-bookworm AS runtime
+ARG APP_VERSION=0.1.0
+ARG BUILD_REVISION=local
+ARG BUILD_TIME=""
+ENV WORK115_VERSION=$APP_VERSION \
+    WORK115_BUILD_REVISION=$BUILD_REVISION \
+    WORK115_BUILD_TIME=$BUILD_TIME
 WORKDIR /opt/115work
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

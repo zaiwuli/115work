@@ -9,6 +9,9 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="WORK115_", env_file=".env", extra="ignore")
 
     data_dir: Path = Path("data")
+    version: str = "0.1.0"
+    build_revision: str = "local"
+    build_time: str = ""
     local_root: Path | None = None
     api_token: SecretStr = SecretStr("")
     local_no_auth: bool = True

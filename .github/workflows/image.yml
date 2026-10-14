@@ -31,7 +31,14 @@ jobs:
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tags+=(--tag "$image:${GITHUB_REF#refs/tags/}")
           fi
+          version="0.1.0"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          fi
           docker buildx build --platform linux/amd64,linux/arm64 \
+            --build-arg "APP_VERSION=$version" \
+            --build-arg "BUILD_REVISION=$GITHUB_SHA" \
+            --build-arg "BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             "${tags[@]}" --label "org.opencontainers.image.source=https://github.com/$REPOSITORY" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
             --cache-from type=gha --cache-to type=gha,mode=max \

@@ -11,7 +11,9 @@ const system = useSystem()
       <div><dt>115 连接</dt><dd>{{ system.status?.adapter === 'disabled' ? '未配置' : system.status?.adapter === 'fake' ? '测试模式' : '已配置' }}</dd></div>
       <div><dt>来源目录</dt><dd>{{ system.status?.sources.length || 0 }} 个</dd></div>
       <div><dt>本地执行器</dt><dd>{{ system.status?.local_formats || '-' }}</dd></div>
-      <div><dt>执行器版本</dt><dd>{{ system.status?.version || '-' }}</dd></div>
+      <div><dt>应用版本</dt><dd>{{ system.status?.version || '-' }}</dd></div>
+      <div><dt>构建编号</dt><dd class="path-cell">{{ system.status?.build_revision || '-' }}</dd></div>
+      <div><dt>构建时间</dt><dd>{{ system.status?.build_time || '-' }}</dd></div>
     </dl>
   </section>
 </template>
