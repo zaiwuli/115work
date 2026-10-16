@@ -16,11 +16,15 @@ import App from './App.vue'
 import Workspace from './Workspace.vue'
 import AdminViews from './AdminViews.vue'
 import { mobileTables } from './mobileTables'
+import { api } from './api'
 
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
-    { path: '/', redirect: '/tasks' },
+    { path: '/', component: Workspace, beforeEnter: async () => {
+      try { return (await api('/api/v1/settings')).default_home || '/tasks' }
+      catch { return '/tasks' }
+    } },
     { path: '/overview', redirect: '/tasks' },
     { path: '/documents', redirect: '/offline' },
     { path: '/connections', redirect: '/settings/connections' },

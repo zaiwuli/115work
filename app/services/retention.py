@@ -8,7 +8,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.domain.paths import contained
-from app.persistence.models import CacheEntry, Operation, Rule, Task
+from app.persistence.models import CacheEntry, Job, Operation, Rule, Task
 from app.services.events import record
 from app.services.execution import operation_scope
 
@@ -225,6 +225,21 @@ class RetentionService:
             with self.db.session() as session:
                 self.store.owned(session, job)
                 task = session.get(Task, item["task_id"])
+                if job.payload.get("automatic"):
+                    if not self.db.settings().get("cache_auto_cleanup", True) or task.state != "SUCCEEDED":
+                        continue
+                    needs_postprocess = task.policy.get("cleanup_enabled") or task.policy.get("original_action", "retain") != "retain"
+                    if needs_postprocess and task.output.get("postprocess_result") != "SUCCEEDED":
+                        continue
+                    if any(task.output.get(key) == "FAILED" for key in (
+                        "postprocess_result", "cleanup_result", "flatten_result",
+                    )):
+                        continue
+                if session.scalar(select(Job.id).where(
+                    Job.payload["task_id"].as_string() == task.id,
+                    Job.state.in_(["READY", "RUNNING", "LEASED", "RECONCILING"]),
+                )):
+                    continue
                 if task.state not in {"SUCCEEDED", "CANCELED", "SKIPPED"}:
                     continue
                 if path.exists():

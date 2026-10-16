@@ -504,6 +504,13 @@ async def set_settings(request: Request):
     if set(body) - allowed:
         raise HTTPException(422, detail="UNKNOWN_OR_SECRET_SETTINGS")
     for key, value in body.items():
+        if key == "cache_auto_cleanup" and type(value) is not bool:
+            raise HTTPException(422, detail="INVALID_CACHE_SETTING")
+        if key == "default_home" and (not isinstance(value, str) or value not in {
+            "/tasks", "/tasks?type=offline", "/offline", "/sources", "/rules",
+            "/passwords", "/jobs", "/history", "/notifications", "/logs", "/settings", "/maintenance",
+        }):
+            raise HTTPException(422, detail="INVALID_HOME_SETTING")
         if key in {"local_max_extract_bytes", "local_reserve_bytes", "local_max_extract_files"}:
             minimum = 1 if key == "local_max_extract_files" else 0
             if type(value) is not int or not minimum <= value <= 2**53 - 1:

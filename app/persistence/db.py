@@ -14,6 +14,8 @@ DEFAULT_SETTINGS = {
     "local_max_extract_files": None,
     "local_reserve_bytes": 5 * 1024**3,
     "allowed_download_hosts": None,
+    "cache_auto_cleanup": True,
+    "default_home": "/tasks",
     "cloud_root_cid": "",
     "cloud_archive_cid": "",
     "cloud_failed_cid": "",

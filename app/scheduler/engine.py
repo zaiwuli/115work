@@ -43,6 +43,7 @@ class Engine:
         self.runner = None
         self.running_jobs = {}
         self.watchers = {}
+        self.next_cache_cleanup = 0
         self.retention = RetentionService(db, config, self.store, adapter)
         self.local.transfer = TransferService(db, config, self.store, adapter)
         self.monitor = CloudMonitor(db, adapter)
@@ -83,6 +84,9 @@ class Engine:
             return
         now = time.time()
         with self.db.session() as session:
+            if now >= self.next_cache_cleanup and self.db.settings().get("cache_auto_cleanup", True):
+                enqueue(session, "automatic-cache-cleanup", "cache_gc", {"automatic": True})
+                self.next_cache_cleanup = now + 60
             self.offline.schedule_poll(session, now)
             self.offline.schedule_discovery(session, now)
             if self.config.adapter == "p115":

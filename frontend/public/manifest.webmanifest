@@ -3,7 +3,7 @@
   "name": "115work",
   "short_name": "115work",
   "lang": "zh-CN",
-  "start_url": "/#/tasks",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f5f7f8",
