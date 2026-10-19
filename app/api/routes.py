@@ -273,8 +273,8 @@ def task_command(request, task_id, action, expected_version=None):
             task.policy = task.policy | {"fallback_approved": True}
             if unsettled:
                 task.policy = task.policy | {
-                    "original_action": "retain", "cloud_remote_unsettled": True,
-                    "previous_cloud_remote_id": task.remote_id,
+                    "cloud_remote_unsettled": True,
+                    "previous_cloud_remote_id": task.remote_id or task.policy.get("previous_cloud_remote_id", ""),
                 }
             task.remote_id = ""
             task.completed_at, task.wait_reason = None, ""
@@ -351,7 +351,7 @@ def task_command(request, task_id, action, expected_version=None):
                     task.policy = task.policy | {"fallback_approved": True}
                     if task.policy.get("cloud_remote_unsettled"):
                         task.policy = task.policy | {
-                            "original_action": "retain", "previous_cloud_remote_id": task.remote_id,
+                            "previous_cloud_remote_id": task.remote_id or task.policy.get("previous_cloud_remote_id", ""),
                         }
                         task.remote_id = ""
                     active = session.get(Settings, "cloud_active")

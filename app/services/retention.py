@@ -99,6 +99,31 @@ class RetentionService:
             if action == "delete" and task.completed_at + self.config.delete_delay_seconds > time.time():
                 return task.completed_at + self.config.delete_delay_seconds
         try:
+            if task.source == "115" and task.policy.get("cloud_remote_unsettled"):
+                remote_id = task.policy.get("previous_cloud_remote_id", "")
+                if not remote_id:
+                    raise ValueError("CLOUD_ORIGINAL_OPERATION_UNCONFIRMED")
+                state = await self.adapter.extract_status(remote_id)
+                if state not in {"success", "failed"}:
+                    with self.db.session() as session:
+                        self.store.owned(session, job)
+                        current = session.get(Task, task.id)
+                        started = current.output.get("original_wait_started_at", time.time())
+                        if time.time() - started >= self.db.settings()["cloud_extract_timeout_seconds"]:
+                            raise ValueError("CLOUD_ORIGINAL_OPERATION_UNCONFIRMED")
+                        first_wait = current.output.get("postprocess_result") != "WAITING_EXTERNAL"
+                        current.output = current.output | {
+                            "postprocess_result": "WAITING_EXTERNAL",
+                            "original_wait_started_at": started,
+                        }
+                        if first_wait:
+                            record(session, task.id, "ORIGINAL_WAITING_REMOTE", "postprocess",
+                                   "本地解压已成功，等待原云操作结束后按原规则处理云端原包")
+                    return time.time() + 120
+                with self.db.session() as session:
+                    self.store.owned(session, job)
+                    current = session.get(Task, task.id)
+                    current.policy = current.policy | {"cloud_remote_unsettled": False}
             if task.source == "115":
                 verification = task.output.get("verification")
                 if verification == "sha256_manifest":

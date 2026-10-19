@@ -74,8 +74,9 @@ async function command(suffix: string, extra: any = {}) {
     <h3>处理结果</h3>
     <dl class="health-list">
       <div v-if="resultLabel"><dt>解压结果</dt><dd>{{ resultLabel }}</dd></div>
-      <div v-if="task.output.postprocess_result"><dt>后处理</dt><dd :class="task.output.postprocess_result === 'FAILED' ? 'error-text' : 'success-text'">{{ task.output.postprocess_result === 'FAILED' ? '未完成，可重试' : task.output.postprocess_result === 'SUCCEEDED' ? '已完成' : stateLabel(task.output.postprocess_result) }}</dd></div>
+      <div v-if="task.output.postprocess_result"><dt>后处理</dt><dd :class="task.output.postprocess_result === 'FAILED' ? 'error-text' : task.output.postprocess_result === 'SUCCEEDED' ? 'success-text' : ''">{{ task.output.postprocess_result === 'FAILED' ? '未完成，可重试' : task.output.postprocess_result === 'SUCCEEDED' ? '已完成' : stateLabel(task.output.postprocess_result) }}</dd></div>
     </dl>
+    <p v-if="task.output.postprocess_result === 'WAITING_EXTERNAL'">本地解压已成功，等待原云操作结束后按原规则处理云端原包。</p>
     <v-btn v-if="task.output.postprocess_result === 'FAILED' && task.output.cleanup_result !== 'FAILED' && task.output.flatten_result !== 'FAILED' && system.status?.role !== 'readonly'" :disabled="busy" variant="outlined" class="mt-3" @click="command('/postprocess/retry')"><RotateCcw :size="16" class="mr-2" />重试后处理</v-btn>
   </section>
   <section v-if="system.status?.role !== 'readonly'" class="task-evidence">

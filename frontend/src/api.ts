@@ -67,6 +67,7 @@ export function errorLabel(value: string) {
     INTERNAL_ERROR: '后台处理异常，请查看事件日志。',
     FALLBACK_CAPABILITY_REQUIRED: '当前原包暂不能下载，请检查 115 连接和文件状态。',
     CLOUD_PROCESSING_TIMEOUT: '云处理超过最长时间，已释放云队列，可选择下载到本地解压。',
+    CLOUD_ORIGINAL_OPERATION_UNCONFIRMED: '本地解压已成功，但原云操作尚未确认结束，已保留云端原包；确认后可重试后处理。',
     DOWNLOAD_HOST_NOT_AUTHORIZED: '下载域名未在允许列表中，请查看任务详情的下载地址诊断。',
     DOWNLOAD_PRIVATE_ADDRESS_REJECTED: '下载域名解析到非公网地址，请检查DNS或代理配置。',
     DOWNLOAD_REQUEST_REJECTED: '下载服务器拒绝请求，请检查下载地址或登录状态。',
