@@ -26,6 +26,7 @@ DEFAULT_SETTINGS = {
     "offline_extract_cid": "",
     "cloud_extract_by_date": True,
     "cloud_retry_seconds": 120,
+    "cloud_extract_timeout_seconds": 900,
     "cloud_cooldown_seconds": 30,
     "offline_fallback_seconds": 3600,
     "notification_offline": True,

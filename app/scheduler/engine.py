@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.adapters.p115 import AdapterError
 from app.adapters.safe_http import SafeHTTPTransport
-from app.persistence.models import Event, Job, Offline, Outbox, Schedule, Source, Task, Transfer
+from app.persistence.models import Event, Job, Offline, Outbox, Schedule, Settings, Source, Task, Transfer
 from app.scheduler.governor import RemoteGovernor
 from app.scheduler.store import JobStore, enqueue
 from app.services.archives import ArchiveService
@@ -84,6 +84,24 @@ class Engine:
             return
         now = time.time()
         with self.db.session() as session:
+            active = session.get(Settings, "cloud_active")
+            task = session.get(Task, active.value.get("value")) if active and active.value.get("value") else None
+            if task and task.stage.startswith("cloud_") and task.state not in {
+                "SUCCEEDED", "FAILED", "CANCELED", "SKIPPED", "WAITING_APPROVAL",
+            }:
+                started = task.policy.get("cloud_started_at", task.updated_at)
+                if now - started >= self.db.settings()["cloud_extract_timeout_seconds"]:
+                    jobs = list(session.scalars(select(Job).where(
+                        Job.payload["task_id"].as_string() == task.id,
+                        Job.kind == "cloud_extract",
+                    )))
+                    # Let an in-flight request settle before changing execution ownership.
+                    if not any(job.state in {"RUNNING", "LEASED"} for job in jobs):
+                        from app.services.fallback import expire_cloud
+                        expire_cloud(session, task)
+                        for job in jobs:
+                            if job.state in {"READY", "RECONCILING"}:
+                                job.state, job.dirty = "SUCCEEDED", False
             if now >= self.next_cache_cleanup and self.db.settings().get("cache_auto_cleanup", True):
                 enqueue(session, "automatic-cache-cleanup", "cache_gc", {"automatic": True})
                 self.next_cache_cleanup = now + 60

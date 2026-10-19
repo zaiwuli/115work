@@ -14,7 +14,7 @@ from app.persistence.models import Identity, Operation, Resource, Settings, Task
 from app.scheduler.store import enqueue
 from app.services.events import record, transition
 from app.services.execution import operation_scope
-from app.services.fallback import approve_automatic
+from app.services.fallback import approve_automatic, expire_cloud
 
 
 ARCHIVE_SUFFIXES = (".zip", ".rar", ".7z", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tar.xz",
@@ -289,6 +289,9 @@ class ArchiveService:
         with self.db.session() as session:
             self.store.owned(session, job)
             task = session.get(Task, task_id)
+            # A queued cloud job must not reclaim a task switched to local execution.
+            if task.policy.get("fallback_approved") or task.stage in {"cache", "local_extract"}:
+                return None
             if task.state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED", "WAITING_APPROVAL"}:
                 active = session.get(Settings, "cloud_active")
                 if active and active.value.get("value") == task_id:
@@ -312,6 +315,13 @@ class ArchiveService:
             if not active_id and cooldown and cooldown.value["value"] > time.time():
                 return cooldown.value["value"]
             session.merge(Settings(key="cloud_active", value={"value": task_id}))
+            started = task.policy.get("cloud_started_at")
+            if not started:
+                started = time.time()
+                task.policy = task.policy | {"cloud_started_at": started}
+            if time.time() - started >= settings["cloud_extract_timeout_seconds"]:
+                expire_cloud(session, task)
+                return None
             if task.cancel_requested and not task.remote_id and task.stage == "cloud_prepare":
                 transition(session, task, "CANCELED", task.stage)
                 session.merge(Settings(key="cloud_active", value={"value": ""}))
@@ -395,14 +405,6 @@ class ArchiveService:
                     operation.status, operation.evidence = "ACCEPTED", {"remote_id": remote_id}
                 return time.time() + 15
             if task.stage == "cloud_progress":
-                if task.error == "REMOTE_OBSERVATION_DEADLINE":
-                    return None
-                if time.time() - task.updated_at > self.config.cloud_observation_timeout:
-                    with self.db.session() as session:
-                        self.store.owned(session, job)
-                        transition(session, session.get(Task, task_id), "RECONCILING",
-                                   "cloud_progress", error="REMOTE_OBSERVATION_DEADLINE")
-                    return None
                 state = await self.adapter.extract_status(task.remote_id)
                 if state in {"running", "unknown"}:
                     return time.time() + 30
@@ -415,12 +417,6 @@ class ArchiveService:
                     transition(session, current, "WAITING_EXTERNAL", "cloud_verify")
                 return time.time()
             if task.stage == "cloud_verify":
-                if time.time() - task.updated_at > self.config.cloud_observation_timeout:
-                    with self.db.session() as session:
-                        self.store.owned(session, job)
-                        transition(session, session.get(Task, task_id), "RECONCILING",
-                                   "cloud_verify", error="OUTPUT_VERIFICATION_DEADLINE")
-                    return None
                 with self.db.session() as session:
                     self.store.owned(session, job)
                     current = session.get(Task, task_id)
@@ -461,7 +457,8 @@ class ArchiveService:
                     return self.fail_content(session, current, exc.code)
                 transition(session, current, "WAITING_EXTERNAL", current.stage, error=exc.code)
                 current.wait_reason = "AUTH" if "AUTH" in exc.code else "CONNECTION"
-            return time.time() + 300
+            return min(time.time() + 300,
+                       task.policy.get("cloud_started_at", time.time()) + settings["cloud_extract_timeout_seconds"])
         return None
 
     def stop_preparation(self, session, task, state, error=""):

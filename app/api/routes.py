@@ -162,12 +162,13 @@ def list_tasks(request: Request, state: str = "", source: str = "", q: str = "",
         total = session.scalar(select(func.count()).select_from(query.subquery()))
         items = session.scalars(query.order_by(Task.created_at.desc())
                                .offset((page - 1) * page_size).limit(page_size))
-        from app.services.fallback import can_fallback
+        from app.services.fallback import can_fallback, can_download_local
         rows = []
         for task in items:
             transfer = session.get(Transfer, task.id)
             rows.append(serialize(task) | {
                 "can_fallback": can_fallback(task),
+                "can_download_local": can_download_local(task),
                 "transfer": serialize(transfer) if transfer else None,
             })
         return {"items": rows, "total": total, "page": page}
@@ -182,8 +183,9 @@ def task_detail(request: Request, task_id: str, summary: bool = False,
         if not task:
             raise HTTPException(404, detail="TASK_NOT_FOUND")
         result = serialize(task)
-        from app.services.fallback import can_fallback
+        from app.services.fallback import can_fallback, can_download_local
         result["can_fallback"] = can_fallback(task)
+        result["can_download_local"] = can_download_local(task)
         removed = set(task.output.get("cleanup_deleted", []))
         result["output"] = dict(result["output"]) | {"cleanup_deleted_count": len(removed)}
         if summary or not files:
@@ -248,6 +250,39 @@ def task_command(request, task_id, action, expected_version=None):
                        "Remote operation may continue")
             elif task.state != "RUNNING":
                 transition(session, task, "CANCELED", task.stage)
+        elif action == "download_local":
+            from app.services.fallback import can_download_local
+            if not can_download_local(task):
+                raise HTTPException(409, detail="FALLBACK_CAPABILITY_REQUIRED")
+            if session.scalar(select(Job.id).where(
+                Job.payload["task_id"].as_string() == task.id,
+                Job.state.in_(["RUNNING", "LEASED"]),
+            )):
+                raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
+            for job in session.scalars(select(Job).where(
+                Job.payload["task_id"].as_string() == task.id,
+                Job.kind == "cloud_extract",
+                Job.state.in_(["READY", "RECONCILING"]),
+            )):
+                job.state, job.dirty = "SUCCEEDED", False
+            unsettled = task.policy.get("cloud_remote_unsettled") or bool(task.remote_id) or task.stage in {
+                "cloud_output", "cloud_export_unknown",
+            }
+            from app.services.execution import begin_execution
+            begin_execution(session, task)
+            task.policy = task.policy | {"fallback_approved": True}
+            if unsettled:
+                task.policy = task.policy | {
+                    "original_action": "retain", "cloud_remote_unsettled": True,
+                    "previous_cloud_remote_id": task.remote_id,
+                }
+            task.remote_id = ""
+            task.completed_at, task.wait_reason = None, ""
+            transition(session, task, "READY", "cache", manual_retry=task.state == "FAILED")
+            active = session.get(Settings, "cloud_active")
+            if active and active.value.get("value") == task.id:
+                active.value = {"value": ""}
+            enqueue(session, "local:" + task.id, "local_extract", {"task_id": task.id})
         elif action == "retry":
             if task.state != "FAILED":
                 raise HTTPException(409, detail="ONLY_FAILED_TASK_CAN_RETRY")
@@ -268,6 +303,8 @@ def task_command(request, task_id, action, expected_version=None):
                 task.stage = "cloud_prepare"
                 task.remote_id = ""
                 task.password_attempts = 0
+                task.policy = {k: v for k, v in task.policy.items()
+                               if k not in {"cloud_started_at", "cloud_remote_unsettled"}}
                 task.output = {}
                 enqueue(session, "archive:" + task.id, "cloud_extract", {"task_id": task.id})
             elif task.stage == "document_copy":
@@ -312,6 +349,14 @@ def task_command(request, task_id, action, expected_version=None):
                             session.delete(identity)
                     transition(session, task, "READY", "cache", manual_retry=failed_cloud)
                     task.policy = task.policy | {"fallback_approved": True}
+                    if task.policy.get("cloud_remote_unsettled"):
+                        task.policy = task.policy | {
+                            "original_action": "retain", "previous_cloud_remote_id": task.remote_id,
+                        }
+                        task.remote_id = ""
+                    active = session.get(Settings, "cloud_active")
+                    if active and active.value.get("value") == task.id:
+                        active.value = {"value": ""}
                     enqueue(session, "local:" + task.id, "local_extract", {"task_id": task.id})
             else:
                 from app.adapters.extract_worker import extractor_available
