@@ -309,7 +309,7 @@ async function saveSettings() {
     }
     settings.value = await api('/api/v1/settings')
     saveSucceeded.value = true
-    saveFeedback.value = hasKey ? '通知设置和 MS 密钥均已保存' : '设置已保存'
+    saveFeedback.value = hasKey ? '通知设置和通知密钥均已保存' : '设置已保存'
   } catch (cause) {
     saveSucceeded.value = false
     saveFeedback.value = (settingsSaved ? '设置已保存，但密钥保存或状态读取失败：' : '保存失败：') + (cause as Error).message
@@ -463,7 +463,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
         <v-text-field v-model="settings.notification_webhook" label="通知服务地址" />
         <v-text-field v-if="settings.notification_provider === 'ms'" v-model="notificationKey" type="password" autocomplete="new-password" :label="settings.notification_api_key_configured ? '通知密钥（已配置）' : '通知密钥'" />
         <v-textarea v-model="settings.notification_template" label="通知模板" rows="5" placeholder="留空使用原工具默认模板" />
-        <v-btn variant="text" class="mt-3" @click="action('/api/notification', { api_key: '' }, 'MS 密钥已清除')"><Trash2 :size="16" class="mr-2" />清除密钥</v-btn>
+        <v-btn variant="text" class="mt-3" @click="action('/api/notification', { api_key: '' }, '通知密钥已清除')"><Trash2 :size="16" class="mr-2" />清除密钥</v-btn>
         <v-btn variant="text" class="mt-3" @click="action('/api/notification/test')"><Send :size="16" class="mr-2" />测试通知</v-btn>
       </section>
       <div v-if="['cloud', 'scheduler', 'downloads', 'notifications', 'status'].includes(settingsSection)" class="save-row"><v-btn color="primary" :disabled="loading || savingSettings" :loading="savingSettings" @click="saveSettings"><Save :size="17" class="mr-2" />{{ savingSettings ? '保存中' : '保存设置' }}</v-btn><p v-if="saveFeedback" :class="saveSucceeded ? 'success-text' : 'error-text'" role="status">{{ saveFeedback }}</p></div>
