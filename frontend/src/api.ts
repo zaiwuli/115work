@@ -91,6 +91,8 @@ export function errorLabel(value: string) {
     TASK_OPERATIONS_PENDING: '任务仍有执行中或待核对的操作，请稍后再试。',
     OFFLINE_OPERATION_PENDING: '离线任务仍在执行或结果不明确，暂不能删除。',
     CONNECTION_SWITCH_BUSY: '当前任务尚未结束，Cookie已保存，请稍后重新启用连接。',
+    CONNECTION_DELETE_BUSY: '当前有任务正在执行，请稍后再删除账户。',
+    CONNECTION_NOT_FOUND: '账户已不存在，请刷新页面。',
     FEATURE_REMOVED: '此功能已移除。',
     SOURCE_OUTPUT_LOOP: '监测目录不能是工具根目录、解压目录、归档目录或失败目录。',
     UPLOAD_FAILED: '文档上传失败，请重试。',

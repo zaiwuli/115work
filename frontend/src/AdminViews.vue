@@ -57,6 +57,7 @@ const directory = ref('0')
 const browser = ref<any[]>([])
 const browseConnection = ref('')
 const deletingRule = ref<any>(null)
+const deletingConnection = ref<any>(null)
 
 async function load() {
   busy.value = true
@@ -180,7 +181,8 @@ watch(() => system.refreshVersion, () => void load())
           <td><div class="row-actions"><button aria-label="诊断连接" title="诊断连接" @click="command('/api/v1/connections/' + item.id + '/diagnose').then(x => diagnosis = x)"><Shield :size="18" /></button>
             <button v-if="item.kind === '115'" aria-label="启用115连接" title="启用115连接" @click="command('/api/v1/connections/' + item.id + '/activate')"><Play :size="18" /></button>
             <button aria-label="浏览目录" title="浏览目录" @click="browse(item)"><Search :size="18" /></button>
-            <button aria-label="更新凭据" title="更新凭据" @click="editing = item; credential = ''; opened = true"><KeyRound :size="18" /></button></div></td></tr>
+            <button aria-label="更新凭据" title="更新凭据" @click="editing = item; credential = ''; opened = true"><KeyRound :size="18" /></button>
+            <button v-if="canWrite" :disabled="busy" aria-label="删除115账户" title="删除115账户" @click="deletingConnection = item"><Trash2 :size="18" /></button></div></td></tr>
       </tbody></table><div v-if="!items.length" class="empty"><Link :size="32" /><span>暂无连接</span></div></div>
       <p v-if="diagnosis" class="mono mt-5">{{ stateLabel(diagnosis.status) }}</p>
       <section v-if="browser.length" class="settings-section"><h2>目录列表</h2><div v-for="file in browser" :key="file.id || file.fid" class="event-line"><span>{{ file.name }}</span><small>{{ file.path || file.cid }} · {{ file.size }}</small></div></section>
@@ -242,4 +244,5 @@ watch(() => system.refreshVersion, () => void load())
       </v-form></v-card-text></v-card></v-dialog>
   </section>
   <v-dialog :model-value="!!deletingRule" max-width="480" @update:model-value="!$event && (deletingRule = null)"><v-card><v-card-title>删除规则“{{ deletingRule?.name }}”？</v-card-title><v-card-actions><v-spacer /><v-btn variant="text" @click="deletingRule = null">返回</v-btn><v-btn color="error" @click="command('/api/v1/rules/' + deletingRule.id, undefined, 'DELETE').then(x => x && (deletingRule = null))">删除</v-btn></v-card-actions></v-card></v-dialog>
+  <v-dialog :model-value="!!deletingConnection" max-width="480" @update:model-value="!$event && (deletingConnection = null)"><v-card><v-card-title>删除115账户？</v-card-title><v-card-text>删除“{{ deletingConnection?.name }}”及保存的 Cookie，并停用115连接。云文件、任务记录和处理规则不会删除。</v-card-text><v-card-actions><v-spacer /><v-btn :disabled="busy" variant="text" @click="deletingConnection = null">返回</v-btn><v-btn :disabled="busy" color="error" @click="command('/api/v1/connections/' + deletingConnection.id, undefined, 'DELETE').then(x => { if (x) { deletingConnection = null; browser = []; diagnosis = null; system.refresh() } })">确认删除</v-btn></v-card-actions></v-card></v-dialog>
 </template>

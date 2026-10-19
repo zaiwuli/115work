@@ -278,6 +278,40 @@ async def rotate_credentials(request: Request, connection_id: str):
     return await activate_connection(request, connection_id)
 
 
+@router.delete("/connections/{connection_id}")
+async def delete_connection(request: Request, connection_id: str):
+    state = request.app.state
+    if not hasattr(state, "connection_activation_lock"):
+        state.connection_activation_lock = asyncio.Lock()
+    async with state.connection_activation_lock:
+        with state.db.session() as session:
+            connection = session.get(Connection, connection_id)
+            if not connection:
+                raise HTTPException(404, detail="CONNECTION_NOT_FOUND")
+            if state.engine.running_jobs:
+                raise HTTPException(409, detail="CONNECTION_DELETE_BUSY")
+            session.delete(connection)
+        # No await between the busy check and adapter replacement: workers cannot
+        # start using the old credentials while this connection is removed.
+        from app.adapters.p115 import DisabledAdapter
+        selected = DisabledAdapter()
+        engine = state.engine
+        previous = engine.adapter
+        engine.adapter = engine.offline.adapter = engine.archives.adapter = selected
+        engine.retention.adapter = engine.local.transfer.adapter = selected
+        engine.monitor.adapter = selected
+        engine.offline.snapshot = None
+        state.config.adapter = "disabled"
+        state.db.set_settings({"adapter_mode": "disabled"})
+        close = getattr(previous, "close", None)
+        try:
+            if close:
+                await close()
+        finally:
+            engine.wake.set()
+    return {"success": True}
+
+
 @router.post("/connections/{connection_id}/diagnose")
 async def diagnose_connection(request: Request, connection_id: str):
     with request.app.state.db.session() as session:
