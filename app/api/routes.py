@@ -432,6 +432,7 @@ async def import_offline(request: Request):
             and not request.app.state.db.settings().get("cloud_root_cid")):
         raise HTTPException(409, detail="CLOUD_ROOT_REQUIRED")
     content_type = request.headers.get("content-type", "")
+    torrent = None
     if content_type.startswith("application/json"):
         body = ImportRequest.model_validate(await request.json())
         text, auto = body.text, body.auto_extract
@@ -443,10 +444,20 @@ async def import_offline(request: Request):
         auto = str(form.get("auto_extract", "true")).lower() == "true"
         upload = form.get("file")
         if upload:
-            raw = await upload.read(request.app.state.config.max_document_bytes + 1)
-            if len(raw) > request.app.state.config.max_document_bytes:
+            if not hasattr(upload, "read"):
+                raise HTTPException(422, detail="INVALID_TORRENT")
+            from app.domain.torrents import MAX_TORRENT_BYTES
+            is_torrent = (upload.filename or "").lower().endswith(".torrent")
+            limit = MAX_TORRENT_BYTES if is_torrent else request.app.state.config.max_document_bytes
+            raw = await upload.read(limit + 1)
+            if len(raw) > limit:
                 raise HTTPException(413, detail="UPLOAD_SIZE_LIMIT")
-            text += "\n" + raw.decode("utf-8-sig")
+            if is_torrent:
+                if text.strip():
+                    raise HTTPException(422, detail="TORRENT_IMPORT_SEPARATELY")
+                torrent = raw
+            else:
+                text += "\n" + raw.decode("utf-8-sig")
     else:
         text = (await request.body()).decode("utf-8-sig")
         auto = True
@@ -456,7 +467,9 @@ async def import_offline(request: Request):
     idempotency = request.headers.get("idempotency-key", "")
     if len(idempotency) > 128:
         raise HTTPException(422, detail="IDEMPOTENCY_KEY_TOO_LONG")
-    fingerprint = hashlib.sha256(json.dumps([text, auto]).encode()).hexdigest()
+    fingerprint = hashlib.sha256(
+        json.dumps([text, auto]).encode() + (torrent if torrent is not None else b"")
+    ).hexdigest()
     async with engine.offline.import_lock:
         with request.app.state.db.session() as session:
             owner = getattr(request.state, "token_key", "admin")
@@ -466,7 +479,8 @@ async def import_offline(request: Request):
                 if previous.value["fingerprint"] != fingerprint:
                     raise HTTPException(409, detail="IDEMPOTENCY_KEY_CONFLICT")
                 return previous.value["result"]
-            result = engine.offline.register(session, text, auto)
+            result = (engine.offline.register_torrent(session, torrent, auto)
+                      if torrent is not None else engine.offline.register(session, text, auto))
             if idempotency:
                 session.add(Settings(key=key, value={"fingerprint": fingerprint, "result": result}))
             if getattr(request.state, "token_key", ""):

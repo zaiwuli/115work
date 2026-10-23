@@ -30,8 +30,8 @@ class OfflineService:
         self.date_lock = asyncio.Lock()
         self.snapshot = None
 
-    def register(self, session, text: str, auto_extract: bool = True, now: float | None = None):
-        links, errors = extract_links(text)
+    def register(self, session, text: str, auto_extract: bool = True, now: float | None = None, *, links=None):
+        links, errors = extract_links(text) if links is None else (links, [])
         if not links and not errors:
             raise ValueError("NO_LINKS")
         now = time.time() if now is None else now
@@ -83,6 +83,20 @@ class OfflineService:
         async with self.import_lock:
             with self.db.session() as session:
                 return self.register(session, text, auto_extract, now)
+
+    def register_torrent(self, session, raw, auto_extract=True):
+        from app.domain.torrents import parse_torrent
+        link = parse_torrent(raw)
+        result = self.register(session, "", auto_extract, links=[link])
+        if result["queued"]:
+            item = session.scalar(select(Offline).where(Offline.batch_id == result["batch_id"]))
+            folder = self.config.data_dir / "torrents"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / (item.id + ".torrent")
+            temporary = path.with_suffix(".part")
+            temporary.write_bytes(raw)
+            temporary.replace(path)
+        return result
 
     def schedule_discovery(self, session, now):
         for window in session.scalars(select(Settings).where(Settings.key.startswith("offline-window:"))):
@@ -148,7 +162,24 @@ class OfflineService:
                             target_date=current.target_date, target_cid=cid,
                             auto_extract=current.auto_extract, status="submitting"))
         try:
-            await self.adapter.submit([t.original_link for t in tasks], cid)
+            if tasks[0].kind == "torrent":
+                from app.domain.torrents import parse_torrent
+                path = self.config.data_dir / "torrents" / (tasks[0].id + ".torrent")
+                try:
+                    raw = path.read_bytes()
+                    parsed = parse_torrent(raw)
+                    if parsed.hash_value != tasks[0].hash_value:
+                        raise ValueError("TORRENT_SOURCE_CHANGED")
+                except (OSError, ValueError):
+                    raise AdapterError("TORRENT_SOURCE_UNAVAILABLE") from None
+                from app.services.folders import durable_folder
+                root = tasks[0].root_cid
+                seed_cid = await durable_folder(
+                    self.db, self.adapter, root, "种子文件", "torrent-folder:" + root,
+                )
+                await self.adapter.submit_torrent(raw, cid, tasks[0].hash_value, seed_cid)
+            else:
+                await self.adapter.submit([t.original_link for t in tasks], cid)
         except AdapterError as exc:
             with self.db.session() as session:
                 self.job_store.owned(session, job)
@@ -267,7 +298,7 @@ class OfflineService:
         for item in tasks:
             if session.scalar(select(ResourceLink).where(ResourceLink.offline_id == item.id)):
                 continue
-            if item.kind == "magnet":
+            if item.kind in {"magnet", "torrent"}:
                 directories = [file for file in candidates if file.is_dir and
                                match_name(file.name) == match_name(item.name)]
                 if len(directories) == 1:

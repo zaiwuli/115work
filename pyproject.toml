@@ -25,6 +25,7 @@ dependencies = [
   "pypdf==6.20.0",
   "qrcode==8.2",
   "pillow==12.3.0",
+  "bencode2==0.3.35",
 ]
 
 [project.optional-dependencies]

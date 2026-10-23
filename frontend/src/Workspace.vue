@@ -219,15 +219,21 @@ async function action(endpoint: string, body: unknown = {}, success = '操作已
   finally { loading.value = false }
 }
 async function importLinks() {
+  if (loading.value) return
+  loading.value = true
+  error.value = ''
   try {
     if (upload.value && !upload.value.name.toLowerCase().endsWith('.txt')) {
       if (linkText.value.trim()) {
-        error.value = '文档导入与粘贴链接请分别提交，避免重复登记'
+        error.value = '文件导入与粘贴链接请分别提交，避免重复登记'
         return
       }
-      await uploadDocument(upload.value)
-      message.value = '文件已登记，解析完成后可在任务中心查看离线任务'
+      const result = await uploadDocument(upload.value, autoExtract.value)
+      message.value = upload.value.name.toLowerCase().endsWith('.torrent')
+        ? `已登记 ${result.queued} 条种子任务，重复 ${result.duplicates} 条`
+        : '文件已登记，解析完成后可在任务中心查看离线任务'
       upload.value = null
+      await load()
       return
     }
     const text = linkText.value + (upload.value ? '\n' + await upload.value.text() : '')
@@ -237,6 +243,7 @@ async function importLinks() {
     upload.value = null
     await load()
   } catch (cause) { error.value = (cause as Error).message }
+  finally { loading.value = false }
 }
 async function showTask(task: any) {
   detailRequest?.abort()
@@ -402,9 +409,9 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       <section class="import-section">
         <v-textarea v-model="linkText" label="ED2K / 磁力 / HTTP / FTP" rows="4" />
         <div class="import-actions">
-          <label class="file-upload"><FileInput :size="17" />{{ upload?.name || '选择文件' }}<input type="file" accept=".txt,.md,.csv,.json,.pdf,.docx" @change="upload = ($event.target as HTMLInputElement).files?.[0] || null" /></label>
-          <v-checkbox v-if="!upload || upload.name.toLowerCase().endsWith('.txt')" v-model="autoExtract" label="自动解压" hide-details density="compact" />
-          <v-spacer /><v-btn color="primary" :disabled="(!linkText.trim() && !upload) || loading" @click="importLinks"><Download :size="17" class="mr-2" />导入链接</v-btn>
+          <label class="file-upload"><FileInput :size="17" />{{ upload?.name || '选择文件' }}<input type="file" accept=".torrent,.txt,.md,.csv,.json,.pdf,.docx" @change="upload = ($event.target as HTMLInputElement).files?.[0] || null" /></label>
+          <v-checkbox v-if="!upload || /\.(txt|torrent)$/i.test(upload.name)" v-model="autoExtract" label="自动解压" hide-details density="compact" />
+          <v-spacer /><v-btn color="primary" :disabled="(!linkText.trim() && !upload) || loading" @click="importLinks"><Download :size="17" class="mr-2" />{{ upload?.name.toLowerCase().endsWith('.torrent') ? '导入种子' : '导入链接' }}</v-btn>
         </div>
       </section>
     </template>

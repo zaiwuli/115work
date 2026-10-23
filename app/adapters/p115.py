@@ -40,6 +40,7 @@ class P115Port(Protocol):
     async def folder(self, parent: str, name: str) -> str: ...
     async def submit(self, links: list[str], cid: str) -> None: ...
     async def offline_snapshot(self) -> list[OfflineStatus]: ...
+    async def submit_torrent(self, raw: bytes, cid: str, info_hash: str, seed_cid: str) -> None: ...
     async def files(self, cid: str, offset: int = 0) -> FilePage: ...
     async def prepare_extract(self, pickcode: str, password: str = "") -> str: ...
     async def inspect_extract(self, pickcode: str) -> str: ...
@@ -51,7 +52,7 @@ class DisabledAdapter:
     async def __getattribute_call(self, *args, **kwargs):
         raise AdapterError("AUTH_REQUIRED")
 
-    folder = submit = offline_snapshot = files = prepare_extract = inspect_extract = (
+    folder = submit = submit_torrent = offline_snapshot = files = prepare_extract = inspect_extract = (
         extract
     ) = extract_status = __getattribute_call
 
@@ -186,6 +187,26 @@ class P115Adapter:
         results = response.get("result")
         if isinstance(results, list) and any(x.get("state") is False for x in results):
             raise AdapterError("PARTIAL_SUBMISSION_REQUIRES_RECONCILIATION", uncertain=True)
+
+    async def submit_torrent(self, raw: bytes, cid: str, info_hash: str, seed_cid: str) -> None:
+        import hashlib
+        sha1 = hashlib.sha1(raw).hexdigest()
+        try:
+            await self.call("upload_file", raw, pid=seed_cid,
+                            filename=sha1 + ".torrent", mutation=True)
+            response = await self.call("clouddownload_torrent", sha1)
+        except AdapterError as exc:
+            # An upload/parse failure cannot have submitted a BT download.
+            raise AdapterError(exc.code) from None
+        data = response.get("data", response)
+        if not isinstance(data, dict) or str(data.get("info_hash", "")).lower() != info_hash:
+            raise AdapterError("TORRENT_REMOTE_PARSE_FAILED")
+        files = data.get("torrent_filelist")
+        if not isinstance(files, list) or not files:
+            raise AdapterError("TORRENT_REMOTE_PARSE_FAILED")
+        payload = {"info_hash": info_hash, "wp_path_id": cid,
+                   "wanted": ",".join(str(index) for index in range(len(files)))}
+        await self.call("clouddownload_task_add_bt", payload, mutation=True)
 
     async def offline_snapshot(self) -> list[OfflineStatus]:
         async with self.snapshot_lock:
@@ -382,6 +403,9 @@ class FakeP115Adapter:
 
     async def submit(self, links: list[str], cid: str):
         self.submissions.append((list(links), cid))
+
+    async def submit_torrent(self, raw: bytes, cid: str, info_hash: str, seed_cid: str):
+        self.submissions.append((["torrent:" + info_hash], cid))
 
     async def offline_snapshot(self) -> list[OfflineStatus]:
         self.snapshot_calls += 1

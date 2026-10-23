@@ -25,7 +25,7 @@ export async function api<T = any>(path: string, body?: unknown, method?: string
   return data
 }
 
-export async function uploadDocument(file: File) {
+export async function uploadDocument(file: File, autoExtract = true) {
   const headers: Record<string, string> = {}
   const token = sessionStorage.getItem('115work-token')
   const csrf = sessionStorage.getItem('115work-csrf')
@@ -33,7 +33,9 @@ export async function uploadDocument(file: File) {
   if (csrf) headers['X-CSRF-Token'] = csrf
   const form = new FormData()
   form.append('file', file)
-  const response = await fetch('/api/v1/documents/upload', {
+  const torrent = file.name.toLowerCase().endsWith('.torrent')
+  if (torrent) form.append('auto_extract', String(autoExtract))
+  const response = await fetch(torrent ? '/api/v1/offline/import' : '/api/v1/documents/upload', {
     method: 'POST', credentials: 'same-origin', headers, body: form,
   })
   const data = await response.json()
@@ -92,6 +94,12 @@ export function errorLabel(value: string) {
     OFFLINE_OPERATION_PENDING: '离线任务仍在执行或结果不明确，暂不能删除。',
     CONNECTION_SWITCH_BUSY: '当前任务尚未结束，Cookie已保存，请稍后重新启用连接。',
     CONNECTION_DELETE_BUSY: '当前有任务正在执行，请稍后再删除账户。',
+    INVALID_TORRENT: '种子文件无效或内容不完整，请选择有效的.torrent文件。',
+    TORRENT_V2_UNSUPPORTED: '暂不支持纯BT v2种子，请使用BT v1或混合种子。',
+    TORRENT_SIZE_LIMIT: '种子文件不能为空且不能超过2MB。',
+    TORRENT_IMPORT_SEPARATELY: '种子文件与粘贴链接请分别导入。',
+    TORRENT_SOURCE_UNAVAILABLE: '本机种子文件缺失或已改变，请删除记录后重新导入种子。',
+    TORRENT_REMOTE_PARSE_FAILED: '115未能解析种子或返回的哈希不一致，未提交下载。',
     CONNECTION_NOT_FOUND: '账户已不存在，请刷新页面。',
     FEATURE_REMOVED: '此功能已移除。',
     SOURCE_OUTPUT_LOOP: '监测目录不能是工具根目录、解压目录、归档目录或失败目录。',
