@@ -194,6 +194,14 @@ class OfflineService:
                     execution.status, execution.error = current.status, current.error
                     current.next_check = time.time() + 15 if exc.uncertain else None
                     record(session, current.id, current.status, "offline_submit", exc.code, "offline")
+                    if current.kind == "torrent":
+                        labels = {"lookup": "查询种子", "upload": "上传种子", "parse": "解析种子",
+                                  "submit": "提交BT下载", "validate_hash": "核对种子哈希",
+                                  "validate_files": "核对文件列表", "validate_name": "核对下载目录名"}
+                        record(session, current.id, "TORRENT_DIAGNOSTIC", "offline_submit",
+                               f"步骤：{labels.get(exc.step, '准备种子')}；"
+                               f"错误：{exc.code}；115错误码：{exc.remote_code or '未提供'}；"
+                               f"提交结果：{'需核对，禁止重复提交' if exc.uncertain else '未成功提交'}")
             return time.time() + 2 if len(tasks) == 10 else None
         with self.db.session() as session:
             self.job_store.owned(session, job)

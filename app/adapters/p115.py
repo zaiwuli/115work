@@ -6,9 +6,11 @@ from typing import Protocol
 
 
 class AdapterError(Exception):
-    def __init__(self, code: str, *, uncertain: bool = False):
+    def __init__(self, code: str, *, uncertain: bool = False, remote_code: str = "", step: str = ""):
         super().__init__(code)
         self.code, self.uncertain = code, uncertain
+        self.remote_code = remote_code if remote_code.isdecimal() and len(remote_code) <= 12 else ""
+        self.step = step
 
 
 @dataclass(frozen=True)
@@ -114,7 +116,7 @@ class P115Adapter:
                     if self.governor:
                         self.governor.failure("REMOTE_RATE_LIMIT")
                     raise AdapterError("REMOTE_RATE_LIMIT")
-                raise AdapterError("REMOTE_REJECTED")
+                raise AdapterError("REMOTE_REJECTED", remote_code=code)
             if self.governor:
                 self.governor.success()
             return response
@@ -191,24 +193,41 @@ class P115Adapter:
     async def submit_torrent(self, raw: bytes, cid: str, info_hash: str, seed_cid: str) -> None:
         import hashlib
         sha1 = hashlib.sha1(raw).hexdigest()
+
+        async def step_call(step, name, *args, **kwargs):
+            try:
+                return await self.call(name, *args, **kwargs)
+            except AdapterError as exc:
+                raise AdapterError(exc.code, uncertain=exc.uncertain if step == "submit" else False,
+                                   remote_code=exc.remote_code, step=step) from None
+
         try:
-            await self.call("upload_file", raw, pid=seed_cid,
-                            filename=sha1 + ".torrent", mutation=True)
-            response = await self.call("clouddownload_torrent", sha1)
+            response = await step_call("lookup", "clouddownload_torrent", sha1)
         except AdapterError as exc:
-            # An upload/parse failure cannot have submitted a BT download.
-            raise AdapterError(exc.code) from None
+            # Only an explicit business rejection permits uploading; never upload
+            # in response to a timeout, authentication challenge, or rate limit.
+            if exc.code != "REMOTE_REJECTED":
+                raise
+            await step_call("upload", "upload_file", raw, pid=seed_cid,
+                            filename=sha1 + ".torrent", mutation=True)
+            response = await step_call("parse", "clouddownload_torrent", sha1)
         data = response.get("data", response)
         if not isinstance(data, dict) or str(data.get("info_hash", "")).lower() != info_hash:
-            raise AdapterError("TORRENT_REMOTE_PARSE_FAILED")
+            raise AdapterError("TORRENT_REMOTE_PARSE_FAILED", step="validate_hash")
         files = data.get("torrent_filelist_web")
         if files is None:
             files = data.get("torrent_filelist")
         if not isinstance(files, list) or not files:
-            raise AdapterError("TORRENT_REMOTE_PARSE_FAILED")
+            raise AdapterError("TORRENT_REMOTE_PARSE_FAILED", step="validate_files")
+        from app.domain.torrents import parse_torrent
+        name = data.get("torrent_name") or parse_torrent(raw).name
+        if (not isinstance(name, str) or not name or name in {".", ".."}
+                or any(char in name for char in "/\\") or any(ord(char) < 32 for char in name)):
+            raise AdapterError("TORRENT_REMOTE_PARSE_FAILED", step="validate_name")
         payload = {"info_hash": info_hash, "wp_path_id": cid,
+                   "savepath": name,
                    "wanted": ",".join(str(index) for index in range(len(files)))}
-        await self.call("clouddownload_task_add_bt", payload, mutation=True)
+        await step_call("submit", "clouddownload_task_add_bt", payload, mutation=True)
 
     async def offline_snapshot(self) -> list[OfflineStatus]:
         async with self.snapshot_lock:
