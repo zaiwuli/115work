@@ -201,7 +201,9 @@ class P115Adapter:
         data = response.get("data", response)
         if not isinstance(data, dict) or str(data.get("info_hash", "")).lower() != info_hash:
             raise AdapterError("TORRENT_REMOTE_PARSE_FAILED")
-        files = data.get("torrent_filelist")
+        files = data.get("torrent_filelist_web")
+        if files is None:
+            files = data.get("torrent_filelist")
         if not isinstance(files, list) or not files:
             raise AdapterError("TORRENT_REMOTE_PARSE_FAILED")
         payload = {"info_hash": info_hash, "wp_path_id": cid,
