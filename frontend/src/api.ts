@@ -98,8 +98,6 @@ export function errorLabel(value: string) {
     TORRENT_V2_UNSUPPORTED: '暂不支持纯BT v2种子，请使用BT v1或混合种子。',
     TORRENT_SIZE_LIMIT: '种子文件不能为空且不能超过2MB。',
     TORRENT_IMPORT_SEPARATELY: '种子文件与粘贴链接请分别导入。',
-    TORRENT_SOURCE_UNAVAILABLE: '本机种子文件缺失或已改变，请删除记录后重新导入种子。',
-    TORRENT_REMOTE_PARSE_FAILED: '115未能解析种子或返回的哈希不一致，未提交下载。',
     CONNECTION_NOT_FOUND: '账户已不存在，请刷新页面。',
     FEATURE_REMOVED: '此功能已移除。',
     SOURCE_OUTPUT_LOOP: '监测目录不能是工具根目录、解压目录、归档目录或失败目录。',

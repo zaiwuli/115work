@@ -35,7 +35,6 @@ class Engine:
             adapter.governor = RemoteGovernor(db)
         self.store = JobStore(db, uuid.uuid4().hex)
         self.offline = OfflineService(db, adapter, self.store)
-        self.offline.config = config
         self.archives = ArchiveService(db, adapter, self.offline, self.store, secrets)
         self.archives.config = config
         self.local = LocalService(db, config, self.store, self.offline, secrets)

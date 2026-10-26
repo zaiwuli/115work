@@ -87,16 +87,7 @@ class OfflineService:
     def register_torrent(self, session, raw, auto_extract=True):
         from app.domain.torrents import parse_torrent
         link = parse_torrent(raw)
-        result = self.register(session, "", auto_extract, links=[link])
-        if result["queued"]:
-            item = session.scalar(select(Offline).where(Offline.batch_id == result["batch_id"]))
-            folder = self.config.data_dir / "torrents"
-            folder.mkdir(parents=True, exist_ok=True)
-            path = folder / (item.id + ".torrent")
-            temporary = path.with_suffix(".part")
-            temporary.write_bytes(raw)
-            temporary.replace(path)
-        return result
+        return self.register(session, "", auto_extract, links=[link])
 
     def schedule_discovery(self, session, now):
         for window in session.scalars(select(Settings).where(Settings.key.startswith("offline-window:"))):
@@ -162,24 +153,7 @@ class OfflineService:
                             target_date=current.target_date, target_cid=cid,
                             auto_extract=current.auto_extract, status="submitting"))
         try:
-            if tasks[0].kind == "torrent":
-                from app.domain.torrents import parse_torrent
-                path = self.config.data_dir / "torrents" / (tasks[0].id + ".torrent")
-                try:
-                    raw = path.read_bytes()
-                    parsed = parse_torrent(raw)
-                    if parsed.hash_value != tasks[0].hash_value:
-                        raise ValueError("TORRENT_SOURCE_CHANGED")
-                except (OSError, ValueError):
-                    raise AdapterError("TORRENT_SOURCE_UNAVAILABLE") from None
-                from app.services.folders import durable_folder
-                root = tasks[0].root_cid
-                seed_cid = await durable_folder(
-                    self.db, self.adapter, root, "种子文件", "torrent-folder:" + root,
-                )
-                await self.adapter.submit_torrent(raw, cid, tasks[0].hash_value, seed_cid)
-            else:
-                await self.adapter.submit([t.original_link for t in tasks], cid)
+            await self.adapter.submit([t.original_link for t in tasks], cid)
         except AdapterError as exc:
             with self.db.session() as session:
                 self.job_store.owned(session, job)
@@ -194,14 +168,6 @@ class OfflineService:
                     execution.status, execution.error = current.status, current.error
                     current.next_check = time.time() + 15 if exc.uncertain else None
                     record(session, current.id, current.status, "offline_submit", exc.code, "offline")
-                    if current.kind == "torrent":
-                        labels = {"lookup": "查询种子", "upload": "上传种子", "parse": "解析种子",
-                                  "submit": "提交BT下载", "validate_hash": "核对种子哈希",
-                                  "validate_files": "核对文件列表", "validate_name": "核对下载目录名"}
-                        record(session, current.id, "TORRENT_DIAGNOSTIC", "offline_submit",
-                               f"步骤：{labels.get(exc.step, '准备种子')}；"
-                               f"错误：{exc.code}；115错误码：{exc.remote_code or '未提供'}；"
-                               f"提交结果：{'需核对，禁止重复提交' if exc.uncertain else '未成功提交'}")
             return time.time() + 2 if len(tasks) == 10 else None
         with self.db.session() as session:
             self.job_store.owned(session, job)
