@@ -88,7 +88,7 @@ class RetentionService:
                 if (task.policy.get("cleanup_enabled") or task.output.get("flatten_result")) and task.output.get("postprocess_result") != "SUCCEEDED":
                     task.output = task.output | {"postprocess_result": "SUCCEEDED"}
                     record(session, task.id, "SUCCEEDED", "complete", "解压及产物清理完成",
-                           "cloud" if task.source == "115" else "local")
+                           "cloud" if task.source == "115" and not task.policy.get("fallback_approved") else "local")
                 return None
             if task.policy.get("rule_id"):
                 rule = session.get(Rule, task.policy["rule_id"])
@@ -217,17 +217,19 @@ class RetentionService:
                 self.store.owned(session, job)
                 current = session.get(Task, task.id)
                 current.output = current.output | {"postprocess_result": "SUCCEEDED"}
-                record(session, task.id, "POSTPROCESS_SUCCEEDED", "postprocess", action, "local")
+                record(session, task.id, "POSTPROCESS_SUCCEEDED", "postprocess", action,
+                       "cloud" if task.source == "115" and not task.policy.get("fallback_approved") else "local")
                 if task.policy.get("cleanup_enabled") or current.output.get("flatten_result"):
                     record(session, task.id, "SUCCEEDED", "complete", "解压、产物清理及原包后处理完成",
-                           "cloud" if task.source == "115" else "local")
+                           "cloud" if task.source == "115" and not task.policy.get("fallback_approved") else "local")
             return None
         except Exception as exc:
             with self.db.session() as session:
                 current = session.get(Task, task.id)
                 current.output = current.output | {"postprocess_result": "FAILED"}
                 record(session, task.id, "POSTPROCESS_FAILED", "postprocess",
-                       str(exc) if isinstance(exc, ValueError) else "POSTPROCESS_FAILED", "local")
+                       str(exc) if isinstance(exc, ValueError) else "POSTPROCESS_FAILED",
+                       "cloud" if task.source == "115" and not task.policy.get("fallback_approved") else "local")
             raise
 
     def cache_preview(self):

@@ -29,6 +29,7 @@ DEFAULT_SETTINGS = {
     "cloud_extract_timeout_seconds": 900,
     "cloud_cooldown_seconds": 30,
     "offline_fallback_seconds": 3600,
+    "notification_events": None,
     "notification_offline": True,
     "notification_cloud": True,
     "notification_local": True,

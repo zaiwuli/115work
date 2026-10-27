@@ -3,13 +3,13 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.adapters.p115 import AdapterError
 from app.domain.links import extract_links, match_name
 from app.persistence.models import (
     Batch, BatchItem, DateFolder, Offline, Operation, ResourceLink,
-    OfflineExecution, Settings,
+    OfflineExecution, Settings, Event,
 )
 from app.scheduler.store import enqueue
 from app.services.events import record
@@ -173,7 +173,7 @@ class OfflineService:
                         OfflineExecution.offline_id == current.id, OfflineExecution.generation == current.generation))
                     execution.status, execution.error = current.status, current.error
                     current.next_check = time.time() + 15 if exc.uncertain else None
-                    record(session, current.id, current.status, "offline_submit", exc.code, "offline")
+                    record(session, current.id, current.status.upper(), "offline_submit", exc.code, "offline")
             return time.time() + 2 if len(tasks) == 10 else None
         with self.db.session() as session:
             self.job_store.owned(session, job)
@@ -375,6 +375,8 @@ class OfflineService:
             if task_id and not tasks:
                 raise ValueError("ONLY_TERMINAL_FAILURE_CAN_RETRY")
             for item in tasks:
+                cutoff = session.scalar(select(func.max(Event.id)).where(Event.task_id == item.id)) or 0
+                session.merge(Settings(key="offline-notification-cutoff:" + item.id, value={"id": cutoff}))
                 item.status, item.error, item.check_count = "queued", "", 0
                 item.retry_count += 1
                 item.generation += 1

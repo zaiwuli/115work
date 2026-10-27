@@ -533,6 +533,7 @@ def retry_seed_cleanup(request: Request, task_id: str):
         saved = session.get(Settings, "seed-policy:" + task_id)
         if not task or task.status != "success" or not saved or saved.value.get("result") != "FAILED":
             raise HTTPException(409, detail="FAILED_SEED_CLEANUP_REQUIRED")
+        saved.value = saved.value | {"notification_cutoff": session.scalar(select(func.max(Event.id))) or 0}
         enqueue(session, "seed-cleanup:" + task_id, "seed_cleanup", {"offline_id": task_id})
     request.app.state.engine.wake.set()
     return {"success": True}
@@ -580,6 +581,7 @@ def refresh_sources(request: Request):
 @secured.get("/api/v1/settings")
 def get_settings(request: Request):
     settings = request.app.state.db.settings()
+    from app.services.notification_options import CATALOG, effective_options
     config = request.app.state.config
     settings = settings | {
         "allowed_download_hosts": settings["allowed_download_hosts"] if settings["allowed_download_hosts"] is not None else config.allowed_download_hosts,
@@ -589,6 +591,8 @@ def get_settings(request: Request):
     return {k: settings[k] for k in DEFAULT_SETTINGS if k != "passwords"} | {
         "password_count": len(settings["passwords"]),
         "notification_api_key_configured": bool(settings.get("notification_api_key")),
+        "notification_catalog": CATALOG,
+        "notification_events": effective_options(settings),
         "paths": {"data": str(request.app.state.config.data_dir)},
     }
 
@@ -632,9 +636,13 @@ async def set_settings(request: Request):
         if key == "life_monitor_enabled" and type(value) is not bool:
             raise HTTPException(422, detail="INVALID_MONITOR_SETTING")
         if key.startswith("notification_") and key not in {
-            "notification_webhook", "notification_provider", "notification_template",
+            "notification_webhook", "notification_provider", "notification_template", "notification_events",
         } and type(value) is not bool:
             raise HTTPException(422, detail="INVALID_NOTIFICATION_SETTING")
+        if key == "notification_events":
+            from app.services.notification_options import KEYS
+            if not isinstance(value, dict) or set(value) - KEYS or any(type(x) is not bool for x in value.values()):
+                raise HTTPException(422, detail="INVALID_NOTIFICATION_EVENTS")
         if key == "notification_provider" and value not in {"ms", "webhook"}:
             raise HTTPException(422, detail="INVALID_NOTIFICATION_PROVIDER")
         if key in {"notification_webhook", "notification_template"} and (

@@ -137,7 +137,7 @@ class OutputCleanup:
                     "cleanup_failed": 0, "cleanup_error": "",
                 }
                 record(session, task.id, "OUTPUT_CLEANUP_SUCCEEDED", "output_cleanup",
-                       f"后缀清理完成：匹配 {len(matched)}，已删除 {len(deleted)}")
+                       f"后缀清理完成：匹配 {len(matched)}，已删除 {len(deleted)}", "cloud" if task.source == "115" and not task.policy.get("fallback_approved") else "local")
         except Exception as exc:
             with self.db.session() as session:
                 current = session.get(Task, task.id)
@@ -148,5 +148,5 @@ class OutputCleanup:
                     "postprocess_result": "FAILED",
                 }
                 record(session, task.id, "OUTPUT_CLEANUP_FAILED", "output_cleanup",
-                       "解压成功，产物清理失败：" + current.output["cleanup_error"])
+                       "解压成功，产物清理失败：" + current.output["cleanup_error"], "cloud" if task.source == "115" and not task.policy.get("fallback_approved") else "local")
             raise

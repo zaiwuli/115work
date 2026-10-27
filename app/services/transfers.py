@@ -217,6 +217,8 @@ class TransferService:
                                      manifest=evidence))
             transfer = session.get(Transfer, task.id)
             transfer.bytes_done, transfer.state = task.size, "SUCCEEDED"
+            from app.services.events import record
+            record(session, task.id, "DOWNLOAD_COMPLETED", "cache", "原包下载完成", "local")
         return target
 
     def cache_bytes(self):

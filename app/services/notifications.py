@@ -28,6 +28,10 @@ def normalize_ms_url(raw):
 
 
 def notification_stage(event):
+    if event.kind == "SEED_CLEANUP_FAILED":
+        return "attention"
+    if event.kind == "SEED_CLEANUP_COMPLETED":
+        return "cleanup"
     if event.kind in {"FAILED", "SUBMIT_FAILED", "SUBMISSION_UNKNOWN",
                       "POSTPROCESS_FAILED", "OUTPUT_CLEANUP_FAILED",
                       "OUTPUT_FLATTEN_FAILED", "WAITING_APPROVAL", "RECONCILING"}:
@@ -46,6 +50,12 @@ def notification_stage(event):
 
 
 def notification_group(event):
+    if event.kind == "WAITING_RETRY" and event.stage == "cloud_prepare":
+        return "cloud_failure"
+    if event.kind in {"DOWNLOADING", "UNKNOWN", "DOWNLOAD_COMPLETED", "CANCELED", "OUTPUT_CLEANUP_SUCCEEDED", "SEED_CLEANUP_STARTED"}:
+        return event.kind.lower()
+    if event.kind in {"SEED_CLEANUP_COMPLETED", "SEED_CLEANUP_FAILED"}:
+        return event.kind.lower()
     if event.kind == "TEST":
         return "test"
     group = notification_stage(event)
@@ -57,12 +67,18 @@ def notification_group(event):
         return event.kind.lower()
     if event.kind == "RUNNING" and event.stage in {"cache", "local_extract", "cloud_progress"}:
         return group
+    if event.kind == "RUNNING" and event.stage == "document_copy":
+        return "cache"
     return ""
 
 
 def enabled(settings, event, category):
     if event.kind == "TEST":
         return True
+    if settings.get("notification_events") is not None:
+        from app.services.notification_options import event_option
+        return bool(settings.get("notification_enabled", True) and
+                    settings["notification_events"].get(event_option(event, category), False))
     if not notification_group(event):
         return False
     if not settings.get("notification_enabled", True):
@@ -80,12 +96,22 @@ def ms_payload(settings, event, category, task_name):
               "SUBMITTED": "离线任务已提交", "SUCCESS": "离线任务完成",
               "POSTPROCESS_SUCCEEDED": "任务清理完成", "POSTPROCESS_FAILED": "任务清理失败"}
     titles["CLOUD_TAKEOVER"] = "云解压已接管"
+    titles.update({"SEED_CLEANUP_COMPLETED": "种子下载后清理完成",
+                   "SEED_CLEANUP_FAILED": "种子下载成功，清理失败"})
+    if event.kind == "SEED_CLEANUP_COMPLETED" and "仅预演" in event.message:
+        titles[event.kind] = "种子清理预演完成（未删除文件）"
     stage = getattr(event, "stage", "")
     title = titles.get(event.kind, STAGE_TITLES.get(stage, "任务状态更新"))
     if event.kind == "TEST" and stage == "notification_flow_test":
         title = event.message
     if event.kind not in titles and event.message and not re.fullmatch(r"[A-Za-z0-9_ :.-]+", event.message):
         title = event.message
+    if settings.get("notification_events") is not None:
+        from app.services.notification_options import CATALOG, event_option
+        option = event_option(event, category)
+        title = next((item["label"] for item in CATALOG if item["id"] == option), title)
+        if option == "seed.preview":
+            title = "种子清理预演完成（未删除文件）"
     values = {
         "icon": {
             "DISCOVERED": "📦", "RUNNING": "⏱️", "SUCCEEDED": "✅",

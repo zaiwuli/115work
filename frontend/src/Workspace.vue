@@ -9,6 +9,7 @@ import {
 import { api, bytes, date, stageLabel, stateLabel, textLabel, errorLabel, uploadDocument, statusTone as tone } from './api'
 import TaskEvidence from './TaskEvidence.vue'
 import SettingsNav from './SettingsNav.vue'
+import NotificationStages from './NotificationStages.vue'
 import SystemHealth from './SystemHealth.vue'
 import { useSystem } from './store'
 
@@ -304,7 +305,7 @@ async function saveSettings() {
     'notification_cloud', 'notification_local', 'notification_webhook',
     'notification_enabled', 'notification_provider', 'notification_template',
     'notification_discovery', 'notification_cache', 'notification_extract',
-    'notification_complete', 'notification_cleanup']) values[key] = settings.value[key]
+    'notification_complete', 'notification_cleanup', 'notification_events']) values[key] = settings.value[key]
   let settingsSaved = false
   try {
     await api('/api/settings', values)
@@ -465,8 +466,7 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       <section v-if="settingsSection === 'notifications'" class="settings-section notification-form"><h2>通知</h2>
         <v-switch v-model="settings.notification_enabled" label="启用通知" color="primary" hide-details />
         <v-select v-model="settings.notification_provider" label="通知方式" :items="[{ title: '密钥通知', value: 'ms' }, { title: '常规 Webhook', value: 'webhook' }]" />
-        <div class="toggle-row"><v-switch v-model="settings.notification_offline" label="离线通知" color="primary" hide-details /><v-switch v-model="settings.notification_cloud" label="云解压通知" color="primary" hide-details /><v-switch v-model="settings.notification_local" label="本地处理通知" color="primary" hide-details /></div>
-        <div class="toggle-row"><v-checkbox v-for="stage in [{ key: 'discovery', title: '发现压缩包' }, { key: 'cache', title: '开始缓存' }, { key: 'extract', title: '开始解压' }, { key: 'complete', title: '完成 / 离线结果' }, { key: 'cleanup', title: '原包处理完成' }]" :key="stage.key" v-model="settings['notification_' + stage.key]" :label="stage.title" hide-details /></div>
+        <NotificationStages v-model="settings.notification_events" :catalog="settings.notification_catalog || []" :disabled="!settings.notification_enabled" />
         <v-text-field v-model="settings.notification_webhook" label="通知服务地址" />
         <v-text-field v-if="settings.notification_provider === 'ms'" v-model="notificationKey" type="password" autocomplete="new-password" :label="settings.notification_api_key_configured ? '通知密钥（已配置）' : '通知密钥'" />
         <v-textarea v-model="settings.notification_template" label="通知模板" rows="5" placeholder="留空使用原工具默认模板" />

@@ -3,7 +3,7 @@ import re
 
 from sqlalchemy import select
 
-from app.persistence.models import Event, Locator, Outbox, Resource, Settings, Step, Task
+from app.persistence.models import Event, Locator, Outbox, Resource, Settings, Step, Task, Offline
 from app.domain.state import validate_transition
 
 
@@ -25,10 +25,20 @@ def record(session, task_id: str, kind: str, stage: str, message: str, category:
             task = session.get(Task, task_id)
             if task:
                 prior = prior.where(Event.id > task.policy.get("execution_event_cutoff", 0))
+            offline = session.get(Offline, task_id) if category == "offline" else None
+            if offline:
+                cutoff = session.get(Settings, "offline-notification-cutoff:" + task_id)
+                if kind.startswith("SEED_CLEANUP_"):
+                    seed = session.get(Settings, "seed-policy:" + task_id)
+                    if seed:
+                        prior = prior.where(Event.id > seed.value.get("notification_cutoff", 0))
+                if cutoff:
+                    prior = prior.where(Event.id > cutoff.value["id"])
             if any(notification_group(previous) == group for previous in session.scalars(prior)):
                 return event
         enabled = session.get(Settings, "notification_" + category)
-        if kind == "TEST" or enabled is None or enabled.value["value"]:
+        options = session.get(Settings, "notification_events")
+        if kind == "TEST" or options is not None or enabled is None or enabled.value["value"]:
             session.add(Outbox(event_id=event.id, category=category))
     return event
 
@@ -42,7 +52,7 @@ def transition(session, task, state: str, stage: str, *, error: str = "", manual
     track_step(session, task, prior_stage, state, stage, error)
     if state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
         task.completed_at = time.time()
-    category = "cloud" if task.source == "115" else "local"
+    category = "cloud" if task.source == "115" and not task.policy.get("fallback_approved") else "local"
     if state == "SUCCEEDED" and (task.policy.get("cleanup_enabled") or (
         task.source == "115" and task.policy.get("squash_root", True)
         and task.output.get("verification") in {"remote_manifest", "remote_reported_complete"}

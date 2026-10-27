@@ -71,6 +71,7 @@ def delete_offline(session, identifier):
         if job.kind == "seed_cleanup":
             session.delete(job)
     session.execute(delete(Settings).where(Settings.key == "seed-policy:" + identifier))
+    session.execute(delete(Settings).where(Settings.key == "offline-notification-cutoff:" + identifier))
     session.flush()
     for batch_id in set(affected_batches + [task.batch_id]):
         if session.scalar(select(Offline.id).where(Offline.batch_id == batch_id)) or session.scalar(

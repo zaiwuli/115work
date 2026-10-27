@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.adapters.p115 import AdapterError
 from app.adapters.safe_http import SafeHTTPTransport
-from app.persistence.models import Event, Job, Offline, Outbox, Schedule, Settings, Source, Task, Transfer
+from app.persistence.models import Event, Job, Offline, Outbox, ResourceLink, Schedule, Settings, Source, Task, Transfer
 from app.scheduler.governor import RemoteGovernor
 from app.scheduler.store import JobStore, enqueue
 from app.services.archives import ArchiveService
@@ -238,10 +238,16 @@ class Engine:
                 task = session.get(Task, event.task_id)
                 offline = session.get(Offline, event.task_id) if item.category == "offline" else None
                 task_name = task.name if task else offline.name if offline else ""
+                if task and task.policy.get("seed_in_place"):
+                    link = session.scalar(select(ResourceLink).where(ResourceLink.task_id == task.id))
+                    seed = session.get(Offline, link.offline_id) if link else None
+                    if seed:
+                        task_name = seed.name + " / " + task.name
                 if offline and task_name == "Magnet":
                     task_name = "未命名磁链"
                 if not notification_enabled(settings, event, item.category):
-                    session.get(Outbox, item.id).status = "suppressed"
+                    saved = session.get(Outbox, item.id)
+                    saved.status, saved.error = "suppressed", "通知总开关或对应阶段已关闭"
                     continue
             webhook = settings["notification_webhook"]
             if not webhook:

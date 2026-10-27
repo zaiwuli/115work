@@ -58,6 +58,7 @@ class SeedCleanup:
             if saved.value.get("result") in {"SUCCEEDED", "PREVIEW"}:
                 return None
             policy = validate_policy(saved.value["policy"].get("seed_cleanup", {}))
+            record(session, identifier, "SEED_CLEANUP_STARTED", "seed_cleanup", "开始种子下载后清理", "offline")
         try:
             roots = [f for f in await listing(self.adapter, task.target_cid)
                      if f.is_dir and f.name == task.name]
@@ -123,7 +124,7 @@ class SeedCleanup:
                 task = session.get(Offline, identifier)
                 task.stage, task.error = "complete", ""
                 record(session, identifier, "SEED_CLEANUP_COMPLETED", "complete",
-                       f"种子下载成功；清理匹配 {len(selected)} 项；" + ("仅预演" if policy["dry_run"] else "清理完成"))
+                       f"种子下载成功；清理匹配 {len(selected)} 项；" + ("仅预演" if policy["dry_run"] else "清理完成"), "offline")
         except Exception as exc:
             with self.db.session() as session:
                 self.store.owned(session, job)
@@ -132,7 +133,7 @@ class SeedCleanup:
                     saved.value = saved.value | {"result": "FAILED", "error": str(exc) if isinstance(exc, ValueError) else type(exc).__name__}
                     task = session.get(Offline, identifier)
                     task.stage, task.error = "seed_cleanup", "SEED_CLEANUP_FAILED"
-                    record(session, identifier, "SEED_CLEANUP_FAILED", "seed_cleanup", "下载成功，清理失败：" + saved.value["error"])
+                    record(session, identifier, "SEED_CLEANUP_FAILED", "seed_cleanup", "下载成功，清理失败：" + saved.value["error"], "offline")
             raise
 
     async def remove(self, job, identifier, file, path, directory=False):
