@@ -6,12 +6,12 @@ from app.services.events import record
 
 
 def validate_policy(value):
-    if not isinstance(value, dict) or set(value) - {"enabled", "mode", "extensions", "keywords", "scope", "minimum", "maximum", "empty_dirs", "dry_run"}:
+    if not isinstance(value, dict) or set(value) - {"enabled", "mode", "extensions", "keywords", "scope", "minimum", "maximum", "empty_dirs", "dry_run", "auto_extract"}:
         raise ValueError("INVALID_SEED_CLEANUP")
     result = {"enabled": False, "mode": "exclude", "extensions": [], "keywords": [],
               "scope": "path", "minimum": None, "maximum": None, "empty_dirs": True,
-              "dry_run": True} | value
-    for key in ("enabled", "empty_dirs", "dry_run"):
+              "dry_run": True, "auto_extract": False} | value
+    for key in ("enabled", "empty_dirs", "dry_run", "auto_extract"):
         if type(result[key]) is not bool:
             raise ValueError("INVALID_SEED_CLEANUP")
     if result["mode"] not in {"all", "include", "exclude"} or result["scope"] not in {"path", "name"}:
@@ -96,6 +96,26 @@ class SeedCleanup:
                 for directory, path in sorted(directories, key=lambda x: x[1].count("/"), reverse=True):
                     if not await listing(self.adapter, directory.fid):
                         await self.remove(job, identifier, directory, path, directory=True)
+            if policy["auto_extract"] and not policy["dry_run"]:
+                from app.services.archives import ArchiveService, is_archive
+                from app.persistence.models import ResourceLink
+                archives = ArchiveService(self.db, self.adapter, None, self.store, None)
+                deleted_ids = {f.fid for f, _ in selected}
+                with self.db.session() as session:
+                    self.store.owned(session, job)
+                    for file, _ in files:
+                        if file.fid in deleted_ids or not is_archive(file.name):
+                            continue
+                        archive = archives.adopt(session, file, True, offline_id=identifier)
+                        if archive:
+                            archive.policy = archive.policy | {
+                                "seed_in_place": True, "cloud_output_cid": file.cid,
+                                "output_date": False, "squash_root": False,
+                                "original_action": "retain", "auto_fallback": False,
+                                "cloud_failed_cid": "", "cleanup_enabled": False,
+                            }
+                            session.merge(ResourceLink(offline_id=identifier, task_id=archive.id,
+                                                       evidence="seed-in-place"))
             with self.db.session() as session:
                 self.store.owned(session, job)
                 saved = session.get(Settings, "seed-policy:" + identifier)

@@ -95,6 +95,9 @@ class ArchiveService:
                            "文件 SHA1 与大小命中已处理资源，未重复解压")
                     return previous
         policy = evaluate(session, source_id, file.name, file.size)
+        seed_rule = session.get(Settings, "seed-policy:" + offline_id) if offline_id else None
+        if seed_rule:
+            policy = {"workflow": "cloud", "original_action": "retain", "auto_fallback": False}
         from app.persistence.models import Source
         source = session.get(Source, source_id) if source_id else None
         from app.persistence.models import Offline
@@ -369,7 +372,11 @@ class ArchiveService:
                 state = await self.adapter.inspect_extract(file["pickcode"])
                 return await self._preparation_result(job, state)
             if task.stage == "cloud_output":
-                output_cid = task.output.get("cid")
+                output_cid = task.policy["cloud_output_cid"] if task.policy.get("seed_in_place") else task.output.get("cid")
+                if task.policy.get("seed_in_place"):
+                    with self.db.session() as session:
+                        self.store.owned(session, job)
+                        session.get(Task, task_id).output = {"cid": output_cid}
                 if not output_cid:
                     from app.services.folders import durable_folder, output_folder
                     root_cid = task.policy["cloud_output_cid"]
