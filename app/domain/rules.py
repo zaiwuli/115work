@@ -15,6 +15,8 @@ def evaluate(session, source_id: str, name: str, size: int) -> dict:
     selected = []
     for rule in session.scalars(select(Rule).where(Rule.enabled)):
         config = rule.config
+        if source_id == "115-torrent" and rule.source_id != source_id:
+            continue
         if rule.source_id and rule.source_id != source_id:
             continue
         if not fnmatch.fnmatchcase(name.casefold(), config.get("pattern", "*").casefold()):

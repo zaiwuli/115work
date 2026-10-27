@@ -21,7 +21,7 @@ def delete_task(session, identifier):
         raise ValueError("TERMINAL_TASK_REQUIRED")
     jobs = list(session.scalars(select(Job).where(
         Job.payload["task_id"].as_string() == identifier)))
-    if any(job.state in {"RUNNING", "READY", "RECONCILING"} for job in jobs):
+    if any(job.state in {"RUNNING", "LEASED", "READY", "RECONCILING"} for job in jobs):
         raise ValueError("TASK_OPERATIONS_PENDING")
     active = session.get(Settings, "cloud_active")
     if active and active.value.get("value") == identifier:
@@ -49,7 +49,8 @@ def delete_offline(session, identifier):
         raise ValueError("OFFLINE_OPERATION_PENDING")
     jobs = list(session.scalars(select(Job).where(
         Job.payload["batch_id"].as_string() == task.batch_id)))
-    if any(job.state == "RUNNING" for job in jobs):
+    jobs += list(session.scalars(select(Job).where(Job.payload["offline_id"].as_string() == identifier)))
+    if any(job.state in {"RUNNING", "LEASED"} for job in jobs):
         raise ValueError("OFFLINE_OPERATION_PENDING")
     affected_batches = list(session.scalars(select(BatchItem.batch_id).where(
         BatchItem.task_id == identifier,
@@ -66,6 +67,10 @@ def delete_offline(session, identifier):
         else:
             session.delete(window)
     session.delete(task)
+    for job in jobs:
+        if job.kind == "seed_cleanup":
+            session.delete(job)
+    session.execute(delete(Settings).where(Settings.key == "seed-policy:" + identifier))
     session.flush()
     for batch_id in set(affected_batches + [task.batch_id]):
         if session.scalar(select(Offline.id).where(Offline.batch_id == batch_id)) or session.scalar(

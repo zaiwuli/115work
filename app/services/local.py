@@ -303,6 +303,12 @@ class LocalService:
         if remote:
             path = await self.transfer.download(task, job)
             if path is None:
+                with self.db.session() as session:
+                    self.store.owned(session, job)
+                    current = session.get(Task, task.id)
+                    if current.cancel_requested:
+                        transition(session, current, "CANCELED", current.stage)
+                        return None
                 return time.time() + 10
         else:
             root = Path(task.locator["root"])
@@ -386,6 +392,12 @@ class LocalService:
                     try:
                         while not communication.done():
                             await asyncio.wait({communication}, timeout=0.5)
+                            with self.db.session() as session:
+                                self.store.owned(session, job)
+                                current = session.get(Task, task.id)
+                                if current.cancel_requested:
+                                    transition(session, current, "CANCELED", current.stage)
+                                    return None
                             if shutil.disk_usage(output_root).free < reserve_bytes:
                                 raise ValueError("INSUFFICIENT_OUTPUT_SPACE")
                             if time.monotonic() > deadline:
@@ -516,13 +528,13 @@ class LocalService:
         with self.db.session() as session:
             self.store.owned(session, job)
             task = session.get(Task, job.payload["task_id"])
-            if task.state in {"SUCCEEDED", "CANCELED"}:
+            if task.state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
                 return None
             if task.cancel_requested:
                 transition(session, task, "CANCELED", task.stage)
                 return None
             source_id = task.locator.get("source_id")
-            if source_id:
+            if source_id and source_id != "115-offline":
                 source = session.get(Source, source_id)
                 if not source or not source.enabled or (
                     task.policy.get("source_revision") and
@@ -530,6 +542,7 @@ class LocalService:
                 ):
                     transition(session, task, "WAITING_RESOURCE", task.stage, error="SOURCE_REVISION_CHANGED")
                     return None
+            transition(session, task, "RUNNING", "document_copy")
         action = task.policy.get("document_action", "register")
         if task.policy.get("document_links") and task.size > self.config.max_document_bytes:
             raise ValueError("DOCUMENT_SIZE_LIMIT")
@@ -544,6 +557,12 @@ class LocalService:
                     transition(session, current, "SUCCEEDED", "complete")
                 return None
             path = await self.transfer.download(task, job)
+            with self.db.session() as session:
+                self.store.owned(session, job)
+                current = session.get(Task, task.id)
+                if current.cancel_requested:
+                    transition(session, current, "CANCELED", current.stage)
+                    return None
             if path is None:
                 return time.time() + 10
             if task.policy.get("document_links"):
@@ -552,6 +571,10 @@ class LocalService:
                     await asyncio.to_thread(shutil.copy2, path, destination)
                 with self.db.session() as session:
                     self.store.owned(session, job)
+                    current = session.get(Task, task.id)
+                    if current.cancel_requested:
+                        transition(session, current, "CANCELED", current.stage)
+                        return None
                     source = session.scalar(select(Source).where(Source.kind == "inbox", Source.enabled))
                     if not source:
                         raise ValueError("INBOX_SOURCE_REQUIRED")
@@ -583,6 +606,10 @@ class LocalService:
                     raise ValueError("DOCUMENT_COPY_MISMATCH")
                 with self.db.session() as session:
                     self.store.owned(session, job)
+                    current = session.get(Task, task.id)
+                    if current.cancel_requested:
+                        transition(session, current, "CANCELED", current.stage)
+                        return None
                     partial.rename(target)
             result = {"path": str(folder), "verification": "sha256_manifest"}
             manifest_path = folder.parent / (".manifest-" + task.id + ".json")
@@ -592,6 +619,9 @@ class LocalService:
         with self.db.session() as session:
             self.store.owned(session, job)
             current = session.get(Task, task.id)
+            if current.cancel_requested:
+                transition(session, current, "CANCELED", current.stage)
+                return None
             current.output = result
             transition(session, current, "SUCCEEDED", "complete")
             if action == "archive":

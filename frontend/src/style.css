@@ -196,3 +196,8 @@ td { padding: 16px 13px; border-bottom: 1px solid #e2e8eb; vertical-align: middl
   .maintenance-list > div { flex-direction: column; align-items: flex-start; gap: 14px; }
   .pause-banner { padding: 10px 16px; }
 }
+
+.rule-intro { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 26px; border: 1px solid var(--border, #dce7e1); border-radius: 12px; background: linear-gradient(120deg, #edf5ef, #fafbf7); }
+.rule-intro h2 { font-size: 22px; margin: 8px 0; color: #243d35; }
+.rule-intro p { color: #617369; font-size: 14px; line-height: 1.7; }
+@media (max-width: 760px) { .rule-intro { align-items: flex-start; flex-direction: column; padding: 20px; } }

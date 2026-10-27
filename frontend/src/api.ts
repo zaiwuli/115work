@@ -107,7 +107,7 @@ export function errorLabel(value: string) {
     ? '操作未完成，请检查配置并查看后台运行日志。' : value)
 }
 export const stageNames: Record<string, string> = {
-  offline_submit: '提交离线', offline_download: '离线下载', discover: '等待发现文件',
+  seed_cleanup: '种子下载后清理', offline_submit: '提交离线', offline_download: '离线下载', discover: '等待发现文件',
   offline_manual: '等待手动查询',
   cloud_prepare: '等待云解压', cloud_inspect: '云解压分析', cloud_output: '准备云端输出',
   cloud_progress: '云解压进行中', cloud_verify: '确认云端完成', cloud_export_unknown: '提交结果核对',

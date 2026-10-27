@@ -47,6 +47,8 @@ class ArchiveService:
         if offline_directory:
             source_id = OFFLINE_SOURCE
         if not is_archive(file.name):
+            if offline_directory:
+                return None
             from app.persistence.models import Offline, Source
             if not source_id and offline_id:
                 parent = session.get(Offline, offline_id)
@@ -293,6 +295,10 @@ class ArchiveService:
             if task.policy.get("fallback_approved") or task.stage in {"cache", "local_extract"}:
                 return None
             if task.state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED", "WAITING_APPROVAL"}:
+                if task.state == "CANCELED" and not task.remote_id and task.stage in {
+                    "cloud_prepare", "cloud_inspect", "cloud_password",
+                }:
+                    self.stop_preparation(session, task, "CANCELED")
                 active = session.get(Settings, "cloud_active")
                 if active and active.value.get("value") == task_id:
                     active.value = {"value": ""}
@@ -384,6 +390,10 @@ class ArchiveService:
                 with self.db.session() as session:
                     self.store.owned(session, job)
                     operation = session.get(Operation, key)
+                    current = session.get(Task, task_id)
+                    if current.cancel_requested and operation is None:
+                        self.stop_preparation(session, current, "CANCELED")
+                        return None
                     if operation:
                         if operation.status == "REJECTED":
                             return self.fail_content(session, session.get(Task, task_id),
@@ -413,6 +423,9 @@ class ArchiveService:
                     current = session.get(Task, task_id)
                     if state == "failed":
                         session.merge(Settings(key="cloud_active", value={"value": ""}))
+                        if current.cancel_requested:
+                            transition(session, current, "CANCELED", current.stage)
+                            return None
                         return self.fail_content(session, current, "CLOUD_CONTENT_FAILED")
                     transition(session, current, "WAITING_EXTERNAL", "cloud_verify")
                 return time.time()

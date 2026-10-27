@@ -87,7 +87,13 @@ class OfflineService:
     def register_torrent(self, session, raw, auto_extract=True):
         from app.domain.torrents import parse_torrent
         link = parse_torrent(raw)
-        return self.register(session, "", auto_extract, links=[link])
+        from app.domain.rules import evaluate
+        policy = evaluate(session, "115-torrent", link.name, 0)
+        result = self.register(session, "", False, links=[link])
+        if result["queued"]:
+            item = session.scalar(select(Offline).where(Offline.batch_id == result["batch_id"]))
+            session.add(Settings(key="seed-policy:" + item.id, value={"policy": policy, "result": "WAITING_DOWNLOAD"}))
+        return result
 
     def schedule_discovery(self, session, now):
         for window in session.scalars(select(Settings).where(Settings.key.startswith("offline-window:"))):
@@ -261,8 +267,22 @@ class OfflineService:
                         current.stage = "offline_manual" if expired else "offline_download"
                     if status == "success":
                         current.stage = "discover"
+                        seed = session.get(Settings, "seed-policy:" + current.id)
+                        if seed:
+                            enqueue(session, "seed-cleanup:" + current.id, "seed_cleanup",
+                                    {"offline_id": current.id})
+                            current.stage = "seed_cleanup"
 
     def bind_candidates(self, session, cid: str, candidates: list, task_for_file, offline_ids=None):
+        def completed(item):
+            item.updated_at = time.time()
+            execution = session.scalar(select(OfflineExecution).where(
+                OfflineExecution.offline_id == item.id,
+                OfflineExecution.generation == item.generation,
+            ))
+            if execution:
+                execution.status, execution.error = item.status, item.error
+
         tasks = list(session.scalars(select(Offline).where(
             Offline.target_cid == cid,
             Offline.status.in_(list(POLLABLE | {"success"})),
@@ -270,12 +290,17 @@ class OfflineService:
         if offline_ids is not None:
             tasks = [item for item in tasks if item.id in offline_ids]
         for item in tasks:
+            seed = session.get(Settings, "seed-policy:" + item.id)
+            if seed:
+                # Only a remote completion observation may authorize seed cleanup.
+                continue
             if session.scalar(select(ResourceLink).where(ResourceLink.offline_id == item.id)):
                 continue
             if item.kind in {"magnet", "torrent"}:
                 directories = [file for file in candidates if file.is_dir and
                                match_name(file.name) == match_name(item.name)]
                 if len(directories) == 1:
+                    item.name = directories[0].name
                     parents = {directories[0].fid}
                     while True:
                         expanded = parents | {file.fid for file in candidates if file.is_dir and file.cid in parents}
@@ -286,6 +311,9 @@ class OfflineService:
                     if children:
                         archive_count = 0
                         for file in children:
+                            from app.services.archives import is_archive
+                            if not is_archive(file.name):
+                                continue
                             task = task_for_file(session, file, item.auto_extract, offline_id=item.id)
                             if task is None:
                                 continue
@@ -301,6 +329,7 @@ class OfflineService:
                         item.stage = "join_review" if archive_count else "complete"
                         item.error = "MAGNET_SCOPE_COMPLETENESS_REQUIRES_REVIEW" if archive_count else ""
                         item.next_check = None
+                        completed(item)
                         continue
             scored = []
             for file in candidates:
@@ -325,6 +354,7 @@ class OfflineService:
                     record(session, item.id, "SUCCESS", "complete",
                            "离线产物已发现，非压缩包不进入解压队列", "offline")
                 item.status, item.stage, item.error, item.next_check = "success", "complete", "", None
+                completed(item)
                 continue
             session.add(ResourceLink(offline_id=item.id, task_id=task.id, evidence=str(best_score)))
             from app.services.archives import is_archive
@@ -334,6 +364,7 @@ class OfflineService:
             if item.status != "success":
                 record(session, item.id, "SUCCESS", "discover", "File discovered", "offline")
             item.status, item.stage, item.error, item.next_check = "success", task.stage, "", None
+            completed(item)
 
     def retry(self, task_id: str | None = None) -> int:
         with self.db.session() as session:

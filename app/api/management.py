@@ -45,7 +45,10 @@ def validate_rule(config):
                "document_action", "document_links", "auto_fallback", "archive_cid", "archive_path",
                "exclude", "output_date", "cloud_failed_cid", "disable_recursion",
                "recurse_iso", "squash_root", "extract_isos",
-               "cleanup_enabled", "cleanup_suffixes", "cleanup_recursive"}
+               "cleanup_enabled", "cleanup_suffixes", "cleanup_recursive", "seed_cleanup"}
+    if "seed_cleanup" in config:
+        from app.services.seed_cleanup import validate_policy
+        config["seed_cleanup"] = validate_policy(config["seed_cleanup"])
     from app.services.output_cleanup import suffixes
     if "cleanup_suffixes" in config:
         config["cleanup_suffixes"] = suffixes(config["cleanup_suffixes"])
@@ -749,7 +752,7 @@ async def reprocess_task(request: Request, task_id: str):
         document = not is_archive(previous.name) and not previous.locator.get("remote_parts")
         pending = session.scalar(select(Job.id).where(
             Job.payload["task_id"].as_string() == task_id,
-            Job.state.in_(["RUNNING", "READY", "RECONCILING"]),
+            Job.state.in_(["RUNNING", "LEASED", "READY", "RECONCILING"]),
         ))
         if pending:
             raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
@@ -764,6 +767,11 @@ async def reprocess_task(request: Request, task_id: str):
         task.password_attempts, task.cancel_requested, task.completed_at = 0, False, None
         task.updated_at = time.time()
         task.policy = task.policy | {"auto_extract": True}
+        if task.source == "115" and not document:
+            task.policy = {key: value for key, value in task.policy.items() if key not in {
+                "fallback_approved", "cloud_started_at", "cloud_remote_unsettled",
+                "previous_cloud_remote_id",
+            }}
         identity = session.get(Identity, previous.content_key)
         if identity:
             session.delete(identity)

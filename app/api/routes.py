@@ -19,7 +19,7 @@ from app.persistence.models import (
     Batch, BatchItem, DocumentImport, Event, Identity, Job, Offline, Outbox,
     ResourceLink, Settings, Source, Task,
     Step, Transfer,
-    OfflineExecution,
+    OfflineExecution, Operation,
 )
 from app.scheduler.store import enqueue
 from app.services.events import record, transition
@@ -236,6 +236,37 @@ def task_command(request, task_id, action, expected_version=None):
             if task.state in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
                 raise HTTPException(409, detail="TASK_ALREADY_TERMINAL")
             task.cancel_requested = True
+            jobs = list(session.scalars(select(Job).where(
+                Job.payload["task_id"].as_string() == task.id,
+            )))
+            if task.stage == "local_fallback":
+                if any(job.state in {"RUNNING", "LEASED"} for job in jobs):
+                    raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
+                for job in jobs:
+                    if job.state in {"READY", "RECONCILING"}:
+                        job.state, job.dirty = "SUCCEEDED", False
+                # Local tracking is abandoned; this does not cancel remote work.
+                for operation in session.scalars(select(Operation).where(
+                    Operation.task_id == task.id,
+                    Operation.status.in_(["PREPARED", "UNKNOWN"]),
+                )):
+                    operation.status = "ABANDONED"
+                transition(session, task, "CANCELED", task.stage)
+                task.wait_reason = ""
+                active = session.get(Settings, "cloud_active")
+                if active and active.value.get("value") == task.id:
+                    active.value = {"value": ""}
+                record(session, task.id, "CANCEL_REQUESTED", task.stage,
+                       "Local tracking canceled; remote operation may continue")
+                return {"success": True}
+            if (task.source == "115" and not task.remote_id and task.stage in {
+                "cloud_prepare", "cloud_inspect", "cloud_password",
+            } and not any(job.state in {"RUNNING", "LEASED"} for job in jobs)):
+                request.app.state.engine.archives.stop_preparation(session, task, "CANCELED")
+                for job in jobs:
+                    if job.state in {"READY", "RECONCILING"}:
+                        job.state, job.dirty = "SUCCEEDED", False
+                return {"success": True}
             if task.source == "115" and not task.remote_id and task.stage in {
                 "cloud_prepare", "cloud_inspect", "cloud_password",
             }:
@@ -245,11 +276,20 @@ def task_command(request, task_id, action, expected_version=None):
                     Job.payload["task_id"].as_string() == task.id,
                 )):
                     job.due = time.time()
+            if any(job.state in {"RUNNING", "LEASED"} for job in jobs):
+                record(session, task.id, "CANCEL_REQUESTED", task.stage,
+                       "Cancellation will settle after the in-flight operation")
+                return {"success": True}
             if task.remote_id or task.stage in {"cloud_inspect", "cloud_export_unknown"}:
                 record(session, task.id, "CANCEL_REQUESTED", task.stage,
                        "Remote operation may continue")
-            elif task.state != "RUNNING":
+            elif task.state != "RUNNING" and not any(
+                job.state in {"RUNNING", "LEASED"} for job in jobs
+            ):
                 transition(session, task, "CANCELED", task.stage)
+                for job in jobs:
+                    if job.state in {"READY", "RECONCILING"}:
+                        job.state, job.dirty = "SUCCEEDED", False
         elif action == "download_local":
             from app.services.fallback import can_download_local
             if not can_download_local(task):
@@ -265,27 +305,16 @@ def task_command(request, task_id, action, expected_version=None):
                 Job.state.in_(["READY", "RECONCILING"]),
             )):
                 job.state, job.dirty = "SUCCEEDED", False
-            unsettled = task.policy.get("cloud_remote_unsettled") or bool(task.remote_id) or task.stage in {
-                "cloud_output", "cloud_export_unknown",
-            }
-            from app.services.execution import begin_execution
-            begin_execution(session, task)
-            task.policy = task.policy | {"fallback_approved": True}
-            if unsettled:
-                task.policy = task.policy | {
-                    "cloud_remote_unsettled": True,
-                    "previous_cloud_remote_id": task.remote_id or task.policy.get("previous_cloud_remote_id", ""),
-                }
-            task.remote_id = ""
-            task.completed_at, task.wait_reason = None, ""
-            transition(session, task, "READY", "cache", manual_retry=task.state == "FAILED")
-            active = session.get(Settings, "cloud_active")
-            if active and active.value.get("value") == task.id:
-                active.value = {"value": ""}
-            enqueue(session, "local:" + task.id, "local_extract", {"task_id": task.id})
+            from app.services.fallback import start_local
+            start_local(session, task)
         elif action == "retry":
             if task.state != "FAILED":
                 raise HTTPException(409, detail="ONLY_FAILED_TASK_CAN_RETRY")
+            if session.scalar(select(Job.id).where(
+                Job.payload["task_id"].as_string() == task.id,
+                Job.state.in_(["RUNNING", "LEASED", "READY", "RECONCILING"]),
+            )):
+                raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
             from app.services.execution import begin_execution
             begin_execution(session, task)
             transition(session, task, "READY", task.stage, manual_retry=True)
@@ -312,6 +341,8 @@ def task_command(request, task_id, action, expected_version=None):
             else:
                 enqueue(session, "local:" + task.id, "local_extract", {"task_id": task.id})
         elif action == "approve":
+            if task.cancel_requested or task.state in {"SUCCEEDED", "CANCELED", "SKIPPED"}:
+                raise HTTPException(409, detail="TASK_ALREADY_TERMINAL")
             if task.stage == "identity_conflict" or task.wait_reason == "IDENTITY":
                 task.wait_reason = ""
                 transition(session, task, "READY", "cloud_prepare" if task.source == "115" else "cache")
@@ -334,30 +365,21 @@ def task_command(request, task_id, action, expected_version=None):
                         task.locator.get("pickcode")
                     ):
                         raise HTTPException(409, detail="FALLBACK_CAPABILITY_REQUIRED")
-                    if failed_cloud:
-                        if session.scalar(select(Job.id).where(
-                            Job.payload["task_id"].as_string() == task.id,
-                            Job.state.in_(["RUNNING", "READY", "RECONCILING"]),
-                        )):
-                            raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
-                        from app.services.execution import begin_execution
-                        begin_execution(session, task)
-                        task.output, task.remote_id, task.completed_at = {}, "", None
-                        task.cancel_requested = False
-                        identity = session.get(Identity, task.content_key)
-                        if identity:
-                            session.delete(identity)
-                    transition(session, task, "READY", "cache", manual_retry=failed_cloud)
-                    task.policy = task.policy | {"fallback_approved": True}
-                    if task.policy.get("cloud_remote_unsettled"):
-                        task.policy = task.policy | {
-                            "previous_cloud_remote_id": task.remote_id or task.policy.get("previous_cloud_remote_id", ""),
-                        }
-                        task.remote_id = ""
-                    active = session.get(Settings, "cloud_active")
-                    if active and active.value.get("value") == task.id:
-                        active.value = {"value": ""}
-                    enqueue(session, "local:" + task.id, "local_extract", {"task_id": task.id})
+                    if task.cancel_requested or task.state in {"CANCELED", "SUCCEEDED", "SKIPPED"}:
+                        raise HTTPException(409, detail="FALLBACK_CAPABILITY_REQUIRED")
+                    if session.scalar(select(Job.id).where(
+                        Job.payload["task_id"].as_string() == task.id,
+                        Job.state.in_(["RUNNING", "LEASED"]),
+                    )):
+                        raise HTTPException(409, detail="TASK_OPERATIONS_PENDING")
+                    for job in session.scalars(select(Job).where(
+                        Job.payload["task_id"].as_string() == task.id,
+                        Job.kind == "cloud_extract",
+                        Job.state.in_(["READY", "RECONCILING"]),
+                    )):
+                        job.state, job.dirty = "SUCCEEDED", False
+                    from app.services.fallback import start_local
+                    start_local(session, task)
             else:
                 from app.adapters.extract_worker import extractor_available
                 if not extractor_available(request.app.state.config):
@@ -400,14 +422,18 @@ def list_offline(request: Request, page: int = 1, page_size: int = 30):
                     "SUCCEEDED", "FAILED", "CANCELED", "SKIPPED",
                 }]
                 failures = [task for task in archives if task.state == "FAILED"]
-                processing = (active or failures or archives or linked)
+                processing = (active or failures or archives)
                 pipeline_stage = processing[0].stage if processing else item.stage
                 row = serialize(item)
                 row.pop("original_link")
+                seed = session.get(Settings, "seed-policy:" + item.id)
+                if seed:
+                    pipeline_stage = item.stage
+                    row["seed_cleanup"] = seed.value
                 task_rows.append(row | {"kind": item.kind, "info_hash": item.hash_value,
                                         "pipeline_status": pipeline_stage,
-                                        "artifact_count": len(linked),
-                                        "archives": [serialize(x) for x in linked]})
+                                        "artifact_count": len(archives),
+                                        "archives": [serialize(x) for x in archives]})
             result.append(serialize(batch) | {"target_name": batch.target_date, "tasks": task_rows,
                                              "check_count": max([x.check_count for x in items], default=0),
                                              "next_check": min([x.next_check for x in items
@@ -421,7 +447,8 @@ def offline_detail(request: Request, task_id: str):
         task = session.get(Offline, task_id)
         if not task:
             raise HTTPException(404, detail="OFFLINE_TASK_NOT_FOUND")
-        return serialize(task) | {"executions": [serialize(x) for x in session.scalars(
+        seed = session.get(Settings, "seed-policy:" + task_id)
+        return serialize(task) | {"seed_cleanup": seed.value if seed else None, "executions": [serialize(x) for x in session.scalars(
             select(OfflineExecution).where(OfflineExecution.offline_id == task_id).order_by(OfflineExecution.generation))]}
 
 
@@ -497,6 +524,18 @@ async def refresh_offline(request: Request):
         engine.offline.schedule_poll(session, time.time(), manual=True)
     engine.wake.set()
     return {"success": True, "operation_id": "offline-poll:115-main"}
+
+
+@secured.post("/api/v1/offline/{task_id}/cleanup/retry", status_code=202)
+def retry_seed_cleanup(request: Request, task_id: str):
+    with request.app.state.db.session() as session:
+        task = session.get(Offline, task_id)
+        saved = session.get(Settings, "seed-policy:" + task_id)
+        if not task or task.status != "success" or not saved or saved.value.get("result") != "FAILED":
+            raise HTTPException(409, detail="FAILED_SEED_CLEANUP_REQUIRED")
+        enqueue(session, "seed-cleanup:" + task_id, "seed_cleanup", {"offline_id": task_id})
+    request.app.state.engine.wake.set()
+    return {"success": True}
 
 
 @secured.post("/api/115/offline/retry", status_code=202)

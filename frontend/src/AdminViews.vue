@@ -6,6 +6,18 @@ import { api, date, stateLabel, textLabel } from './api'
 import { useSystem } from './store'
 import SettingsNav from './SettingsNav.vue'
 import RecentEvents from './RecentEvents.vue'
+import SeedRuleDesigner from './SeedRuleDesigner.vue'
+const seedDesignerOpen = ref(false)
+const seedEditing = ref<any>(null)
+const ruleSearch = ref('')
+const ruleSource = ref('')
+const visibleRules = computed(() => items.value.filter(item =>
+  (!ruleSearch.value || item.name.toLowerCase().includes(ruleSearch.value.toLowerCase())) &&
+  (!ruleSource.value || (ruleSource.value === 'all' ? !item.source_id : item.source_id === ruleSource.value)),
+))
+function sourceLabel(id: string) {
+  return id === '115-torrent' ? '种子下载' : id === '115-offline' ? '115离线下载' : id ? sources.value.find(x => x.id === id)?.name || '已删除来源' : '所有普通来源'
+}
 const system = useSystem()
 const canWrite = computed(() => system.status?.role !== 'readonly')
 
@@ -81,6 +93,7 @@ async function command(path: string, body: unknown = {}, method?: string) {
   finally { busy.value = false }
 }
 function open(item?: any) {
+  if (view.value === 'rules' && item?.source_id === '115-torrent') { seedEditing.value = item; seedDesignerOpen.value = true; return }
   editing.value = item || null
   credential.value = ''
   name.value = item?.name || (view.value === 'connections' ? '115' : '')
@@ -191,10 +204,12 @@ watch(() => system.refreshVersion, () => void load())
     </template>
 
     <template v-else-if="view === 'rules'">
+      <section class="rule-intro"><div><div class="eyebrow">从来源到结果</div><h2>每种来源，一套清晰的处理方式</h2><p>配置匹配条件、解压方式与完成后处理。多个同范围规则命中时，系统会提示冲突。</p></div><v-btn variant="outlined" color="primary" @click="seedEditing = null; seedDesignerOpen = true">种子下载规则</v-btn></section>
+      <div class="form-grid mt-5"><v-text-field v-model="ruleSearch" label="搜索规则名称" /><v-select v-model="ruleSource" label="筛选来源" :items="[{title:'全部规则',value:''},{title:'所有普通来源',value:'all'},{title:'115离线下载',value:'115-offline'},...sources.map(x => ({title:x.name,value:x.id}))]" /></div>
       <div class="table-wrap"><table><thead><tr><th>规则</th><th>来源</th><th>匹配</th><th>流程</th><th>原包策略</th><th>操作</th></tr></thead><tbody>
-        <tr v-for="item in items" :key="item.id"><td><strong>{{ item.name }}</strong><small>版本 {{ item.revision }}</small></td><td>{{ item.source_id === '115-offline' ? '115离线下载' : item.source_id ? sources.find(x => x.id === item.source_id)?.name || '已删除来源' : '所有来源' }}</td><td>{{ item.config.pattern || '*' }}</td><td>{{ stateLabel(item.config.workflow || 'auto') }}</td><td>{{ stateLabel(item.config.original_action || 'retain') }}</td>
+        <tr v-for="item in visibleRules" :key="item.id"><td><strong>{{ item.name }}</strong><small>{{ item.enabled ? '已启用' : '已停用' }} · 版本 {{ item.revision }}</small></td><td>{{ sourceLabel(item.source_id) }}</td><td>{{ item.config.pattern || '*' }}</td><td>{{ stateLabel(item.config.workflow || 'auto') }}<small>{{ item.config.auto_fallback ? '云端失败后转本地' : '不自动回退' }}</small></td><td>{{ stateLabel(item.config.original_action || 'retain') }}<small v-if="item.config.cleanup_enabled">解压后清理指定类型</small></td>
           <td><div v-if="canWrite" class="row-actions"><button class="file-link" aria-label="编辑规则" title="编辑规则" @click="open(item)"><Save :size="17" /></button><button aria-label="删除规则" title="删除规则" @click="deletingRule = item"><Trash2 :size="17" /></button></div></td></tr>
-      </tbody></table><div v-if="!items.length" class="empty"><Archive :size="32" /><span>暂无规则</span></div></div>
+      </tbody></table><div v-if="!visibleRules.length" class="empty"><Archive :size="32" /><span>{{ items.length ? '没有符合筛选条件的规则' : '暂无规则' }}</span></div></div>
       <section v-if="canWrite" class="settings-section"><h2>规则预览</h2><div class="form-grid"><v-text-field v-model="previewName" label="文件名" /><v-btn variant="outlined" :disabled="!previewName" @click="command('/api/v1/rules/preview', { name: previewName, size: 0, source_id: sourceId }).then(x => preview = x)"><Search :size="17" class="mr-2" />预览</v-btn></div><p v-if="preview" class="mono mt-4">{{ stateLabel(preview.policy.workflow || 'auto') }}</p></section>
     </template>
 
@@ -220,15 +235,19 @@ watch(() => system.refreshVersion, () => void load())
       </tbody></table><div v-if="!items.length" class="empty">暂无记录</div></div>
     </template>
 
-    <v-dialog v-model="opened" max-width="600"><v-card><header class="dialog-heading"><h2>{{ editing ? '编辑' : '添加' }}{{ titles[view] }}</h2><v-btn icon variant="text" aria-label="关闭" @click="opened = false"><X :size="20" /></v-btn></header>
+    <v-dialog v-model="seedDesignerOpen" max-width="1100" scrollable><SeedRuleDesigner v-if="seedDesignerOpen" :rule="seedEditing" @saved="load" @close="seedDesignerOpen = false" /></v-dialog>
+    <v-dialog v-model="opened" :max-width="view === 'rules' ? 800 : 600"><v-card><header class="dialog-heading"><h2>{{ editing ? '编辑' : '添加' }}{{ titles[view] }}</h2><v-btn icon variant="text" aria-label="关闭" @click="opened = false"><X :size="20" /></v-btn></header>
       <v-card-text><v-form class="dialog-form" @submit.prevent="editing && view === 'connections' ? saveCredentials() : save()">
         <template v-if="view === 'connections'"><v-text-field v-if="!editing" v-model="name" label="连接名称" /><v-select v-if="!editing" v-model="kind" :items="[{ title: '115 Cookie', value: '115' }]" label="类型" /><v-text-field v-if="!editing && kind === '115'" v-model="directory" label="根 CID" /><v-text-field v-model="credential" type="password" label="115 Cookie" autocomplete="off" /></template>
         <template v-else><v-text-field v-model="name" label="名称" /><v-select v-model="sourceId" :items="[{ title: '所有来源', value: '' }, ...(view === 'rules' ? [{ title: '115离线下载', value: '115-offline' }] : []), ...sources.map(x => ({ title: x.name, value: x.id }))]" label="来源" aria-label="来源" />
           <template v-if="view === 'rules'">
+            <h3>01 · 匹配与执行</h3>
             <v-text-field v-model="pattern" label="文件名模式" />
             <v-select v-model="workflow" :items="[{ title: '自动', value: 'auto' }, { title: '本地', value: 'local' }, { title: '云端', value: 'cloud' }, { title: '忽略', value: 'ignore' }]" label="工作流" />
+            <h3>02 · 完成后处理</h3>
             <v-select v-model="originalAction" :items="[{ title: '保留', value: 'retain' }, { title: '归档', value: 'archive' }]" label="原包策略" />
             <v-select v-model="documentAction" :items="[{ title: '只读登记', value: 'register' }, { title: '复制', value: 'copy' }, { title: '归档', value: 'archive' }]" label="普通文档" />
+            <h3>03 · 解压与清理选项</h3>
             <v-switch v-model="disableRecursion" label="禁止递归解压" color="primary" />
             <v-switch v-model="squashRoot" label="同名文件夹提层" color="primary" />
             <v-switch v-model="autoFallback" label="云解压失败后自动下载到本地" color="primary" />

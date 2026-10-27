@@ -145,6 +145,7 @@ class Engine:
                 "cache_gc": self.retention.cleanup,
                 "document_copy": self.local.document_copy,
                 "failure_archive": self.retention.failed_archive,
+                "seed_cleanup": self.cleanup_seed,
             }.get(job.kind)
             if not handler:
                 raise ValueError("UNKNOWN_JOB_KIND")
@@ -176,6 +177,12 @@ class Engine:
                        f"调度任务失败；错误代码 {code[:100]}；异常类型 {type(exc).__name__}")
                 if job.kind == "local_extract":
                     task = session.get(Task, job.payload["task_id"])
+                    if task.cancel_requested:
+                        if task.state not in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
+                            transition(session, task, "CANCELED", task.stage)
+                        current.state, current.dirty = "SUCCEEDED", False
+                        current.owner, current.lease_until = "", None
+                        return
                     transfer = session.get(Transfer, task.id)
                     if task.stage == "cache" and isinstance(exc, AdapterError):
                         transition(session, task, "WAITING_RESOURCE", "cache", error=code[:100])
@@ -192,12 +199,15 @@ class Engine:
                     from app.persistence.models import Identity
                     session.merge(Identity(key=task.content_key, task_id=task.id, result="failed"))
                     current.state = "FAILED"
-                elif job.kind in {"document", "postprocess", "document_copy", "failure_archive"}:
+                elif job.kind in {"document", "postprocess", "document_copy", "failure_archive", "seed_cleanup"}:
                     current.state = "FAILED"
                     if job.kind == "document_copy":
                         task = session.get(Task, job.payload["task_id"])
                         if task and task.state not in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:
-                            transition(session, task, "FAILED", task.stage, error=code[:100])
+                            transition(session, task, "CANCELED" if task.cancel_requested else "FAILED",
+                                       task.stage, error="" if task.cancel_requested else code[:100])
+                        if task and task.cancel_requested:
+                            current.state, current.dirty = "SUCCEEDED", False
                 else:
                     current.state, current.due = "READY", time.time() + 300
                 current.owner, current.lease_until = "", None
@@ -210,6 +220,10 @@ class Engine:
     async def poll_job(self, job):
         await self.offline.poll(job, manual=job.payload.get("manual", False))
         return None
+
+    async def cleanup_seed(self, job):
+        from app.services.seed_cleanup import SeedCleanup
+        return await SeedCleanup(self.db, self.store, self.adapter).run(job)
 
     async def notify(self, job):
         with self.db.session() as session:
@@ -292,6 +306,7 @@ class Engine:
                 "local_scan", "local_extract", "document", "notifications",
                 "postprocess", "cache_gc", "document_copy", "failure_archive",
                 "life_monitor",
+                "seed_cleanup",
             ]
             kinds = ["notifications", "cache_gc"] if paused else all_kinds
             active_jobs = None
