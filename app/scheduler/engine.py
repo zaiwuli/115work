@@ -236,12 +236,14 @@ class Engine:
         return await SeedCleanup(self.db, self.store, self.adapter).run(job)
 
     async def notify(self, job):
+        settings = self.db.settings()
         with self.db.session() as session:
             self.store.owned(session, job)
+            from app.services.notification_chains import collect
+            collect(session, settings)
             notifications = list(session.scalars(select(Outbox).where(
                 Outbox.status == "pending", Outbox.next_run <= time.time(),
             ).limit(20)))
-        settings = self.db.settings()
         for item in notifications:
             with self.db.session() as session:
                 event = session.get(Event, item.event_id)

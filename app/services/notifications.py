@@ -50,6 +50,8 @@ def notification_stage(event):
 
 
 def notification_group(event):
+    if event.kind.startswith("CHAIN_"):
+        return event.kind.lower()
     if event.kind == "WAITING_RETRY" and event.stage == "cloud_prepare":
         return "cloud_failure"
     if event.kind in {"DOWNLOADING", "UNKNOWN", "DOWNLOAD_COMPLETED", "CANCELED", "OUTPUT_CLEANUP_SUCCEEDED", "SEED_CLEANUP_STARTED"}:
@@ -75,6 +77,18 @@ def notification_group(event):
 def enabled(settings, event, category):
     if event.kind == "TEST":
         return True
+    if settings.get("notification_mode", "custom") != "custom":
+        if not settings.get("notification_enabled", True):
+            return False
+        if event.created_at < settings.get("notification_mode_since", 0):
+            return False
+        if event.kind == "CHAIN_SUCCEEDED":
+            return settings["notification_mode"] == "result"
+        if event.kind == "CHAIN_FAILED":
+            return True
+        return event.kind in {"WAITING_APPROVAL", "RECONCILING", "UNKNOWN", "SUBMISSION_UNKNOWN"}
+    if event.kind.startswith("CHAIN_"):
+        return False
     if settings.get("notification_events") is not None:
         from app.services.notification_options import event_option
         return bool(settings.get("notification_enabled", True) and
@@ -98,6 +112,7 @@ def ms_payload(settings, event, category, task_name):
     titles["CLOUD_TAKEOVER"] = "云解压已接管"
     titles.update({"SEED_CLEANUP_COMPLETED": "种子下载后清理完成",
                    "SEED_CLEANUP_FAILED": "种子下载成功，清理失败"})
+    titles.update({"CHAIN_SUCCEEDED": "处理完成", "CHAIN_FAILED": "处理失败"})
     if event.kind == "SEED_CLEANUP_COMPLETED" and "仅预演" in event.message:
         titles[event.kind] = "种子清理预演完成（未删除文件）"
     stage = getattr(event, "stage", "")
@@ -130,6 +145,8 @@ def ms_payload(settings, event, category, task_name):
     values["task"] = re.sub(r"\{\{[^}]*\}\}", "{{***}}", values["task"])
     content = re.sub(r"\{\{(\w+)\}\}", lambda match: values.get(match[1], match[0]),
                      settings.get("notification_template") or DEFAULT_TEMPLATE)
+    if event.kind.startswith("CHAIN_"):
+        content += "\n结果：" + event.message
     return {"title": title, "content": content, "imageUrl": "", "proxy": False}
 
 

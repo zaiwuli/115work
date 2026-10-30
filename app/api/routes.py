@@ -637,12 +637,17 @@ async def set_settings(request: Request):
             raise HTTPException(422, detail="INVALID_MONITOR_SETTING")
         if key.startswith("notification_") and key not in {
             "notification_webhook", "notification_provider", "notification_template", "notification_events",
+            "notification_mode", "notification_mode_since",
         } and type(value) is not bool:
             raise HTTPException(422, detail="INVALID_NOTIFICATION_SETTING")
         if key == "notification_events":
             from app.services.notification_options import KEYS
             if not isinstance(value, dict) or set(value) - KEYS or any(type(x) is not bool for x in value.values()):
                 raise HTTPException(422, detail="INVALID_NOTIFICATION_EVENTS")
+        if key == "notification_mode" and value not in {"custom", "attention", "result"}:
+            raise HTTPException(422, detail="INVALID_NOTIFICATION_MODE")
+        if key == "notification_mode_since":
+            raise HTTPException(422, detail="READ_ONLY_SETTING")
         if key == "notification_provider" and value not in {"ms", "webhook"}:
             raise HTTPException(422, detail="INVALID_NOTIFICATION_PROVIDER")
         if key in {"notification_webhook", "notification_template"} and (
@@ -662,6 +667,8 @@ async def set_settings(request: Request):
             raise HTTPException(422, detail="WEBHOOK_HOST_REQUIRES_EXPLICIT_ALLOWLIST")
     if body.get("life_monitor_enabled") and not request.app.state.db.settings()["life_monitor_enabled"]:
         body["life_monitor_started"] = time.time()
+    if "notification_mode" in body and body["notification_mode"] != request.app.state.db.settings()["notification_mode"]:
+        body["notification_mode_since"] = time.time()
     request.app.state.db.set_settings(body)
     request.app.state.engine.wake.set()
     return {"success": True}

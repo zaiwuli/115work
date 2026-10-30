@@ -30,6 +30,8 @@ DEFAULT_SETTINGS = {
     "cloud_cooldown_seconds": 30,
     "offline_fallback_seconds": 3600,
     "notification_events": None,
+    "notification_mode": "custom",
+    "notification_mode_since": 0,
     "notification_offline": True,
     "notification_cloud": True,
     "notification_local": True,

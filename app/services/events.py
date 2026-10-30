@@ -15,9 +15,13 @@ def record(session, task_id: str, kind: str, stage: str, message: str, category:
     if category:
         from app.services.notifications import notification_group
         group = notification_group(event)
+        mode = session.get(Settings, "notification_mode")
+        simplified = mode is not None and mode.value.get("value") != "custom"
+        if simplified and kind in {"WAITING_APPROVAL", "RECONCILING"} and stage == "local_fallback":
+            group = "fallback_attention"
         if not group:
             return event
-        if kind != "TEST":
+        if kind != "TEST" and not kind.startswith("CHAIN_"):
             prior = select(Event).join(Outbox, Outbox.event_id == Event.id).where(
                 Event.task_id == task_id, Event.id != event.id,
                 Outbox.category == category,
@@ -34,12 +38,24 @@ def record(session, task_id: str, kind: str, stage: str, message: str, category:
                         prior = prior.where(Event.id > seed.value.get("notification_cutoff", 0))
                 if cutoff:
                     prior = prior.where(Event.id > cutoff.value["id"])
-            if any(notification_group(previous) == group for previous in session.scalars(prior)):
+            def previous_group(previous):
+                if simplified and previous.kind in {"WAITING_APPROVAL", "RECONCILING"} and previous.stage == "local_fallback":
+                    return "fallback_attention"
+                return notification_group(previous)
+            if any(previous_group(previous) == group for previous in session.scalars(prior)):
                 return event
         enabled = session.get(Settings, "notification_" + category)
         options = session.get(Settings, "notification_events")
-        if kind == "TEST" or options is not None or enabled is None or enabled.value["value"]:
-            session.add(Outbox(event_id=event.id, category=category))
+        mode = session.get(Settings, "notification_mode")
+        if kind == "TEST" or mode is not None or options is not None or enabled is None or enabled.value["value"]:
+            status = "pending"
+            if options is not None or mode is not None:
+                from app.services.notifications import enabled as notification_enabled
+                values = {row.key: row.value["value"] for row in session.scalars(select(Settings))
+                          if row.key.startswith("notification_") and "value" in row.value}
+                if not notification_enabled(values, event, category):
+                    status = "suppressed"
+            session.add(Outbox(event_id=event.id, category=category, status=status))
     return event
 
 

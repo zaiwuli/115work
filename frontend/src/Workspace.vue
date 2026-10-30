@@ -294,6 +294,10 @@ async function sendDocument() {
     await load()
   } catch (cause) { error.value = (cause as Error).message }
 }
+async function testNotification() {
+  await saveSettings()
+  if (saveSucceeded.value) await action('/api/notification/test')
+}
 async function saveSettings() {
   if (savingSettings.value) return
   savingSettings.value = true
@@ -305,7 +309,7 @@ async function saveSettings() {
     'notification_cloud', 'notification_local', 'notification_webhook',
     'notification_enabled', 'notification_provider', 'notification_template',
     'notification_discovery', 'notification_cache', 'notification_extract',
-    'notification_complete', 'notification_cleanup', 'notification_events']) values[key] = settings.value[key]
+    'notification_complete', 'notification_cleanup', 'notification_events', 'notification_mode']) values[key] = settings.value[key]
   let settingsSaved = false
   try {
     await api('/api/settings', values)
@@ -463,15 +467,23 @@ watch(search, () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => 
       <section v-if="settingsSection === 'scheduler'" class="settings-section"><h2>调度节奏</h2><div class="form-grid"><v-select v-model="settings.local_extract_concurrency" :items="[1, 2, 3, 4]" label="本地同时解压数量" /><v-text-field v-model.number="settings.cloud_extract_timeout_seconds" type="number" min="15" max="86400" label="云处理最长时间 / 秒（含重试）" /><v-text-field v-model.number="settings.cloud_retry_seconds" type="number" min="15" label="云解压重试间隔 / 秒" /><v-text-field v-model.number="settings.cloud_cooldown_seconds" type="number" min="15" label="成功冷却 / 秒" /><v-text-field v-model.number="settings.offline_fallback_seconds" type="number" min="15" label="离线兜底查询 / 秒" /></div></section>
       <section v-if="settingsSection === 'scheduler'" class="settings-section"><h2>本地解压</h2><div class="form-grid"><v-switch :model-value="settings.local_max_extract_bytes === 0" label="不限制本地解压输出总量" color="primary" @update:model-value="settings.local_max_extract_bytes = $event ? 0 : 20 * 1024**3" /><v-text-field v-if="settings.local_max_extract_bytes !== 0" v-model.number="localLimitGiB" type="number" min="0.01" step="1" label="输出总量上限 / GiB" /><v-text-field v-model.number="settings.local_max_extract_files" type="number" min="1" label="文件数量上限" /><v-text-field v-model.number="localReserveGiB" type="number" min="0" step="1" label="输出盘预留空间 / GiB" /></div></section>
       <section v-if="settingsSection === 'downloads'" class="settings-section"><h2>允许的下载域名</h2><div class="import-actions"><v-text-field v-model="downloadHost" label="域名或子域名范围（.115cdn.net）" @keydown.enter.prevent="addDownloadHost" /><v-btn icon variant="outlined" title="添加域名" aria-label="添加域名" :disabled="!downloadHost.trim()" @click="addDownloadHost"><Plus :size="18" /></v-btn></div><div v-for="(host, index) in settings.allowed_download_hosts || []" :key="host" class="event-line"><span class="path-cell">{{ host }}</span><v-btn icon variant="text" title="删除域名" aria-label="删除域名" @click="settings.allowed_download_hosts.splice(index, 1)"><Trash2 :size="17" /></v-btn></div></section>
-      <section v-if="settingsSection === 'notifications'" class="settings-section notification-form"><h2>通知</h2>
+      <section v-if="settingsSection === 'notifications'" class="settings-section notification-form"><h2>通知服务</h2>
         <v-switch v-model="settings.notification_enabled" label="启用通知" color="primary" hide-details />
         <v-select v-model="settings.notification_provider" label="通知方式" :items="[{ title: '密钥通知', value: 'ms' }, { title: '常规 Webhook', value: 'webhook' }]" />
-        <NotificationStages v-model="settings.notification_events" :catalog="settings.notification_catalog || []" :disabled="!settings.notification_enabled" />
         <v-text-field v-model="settings.notification_webhook" label="通知服务地址" />
         <v-text-field v-if="settings.notification_provider === 'ms'" v-model="notificationKey" type="password" autocomplete="new-password" :label="settings.notification_api_key_configured ? '通知密钥（已配置）' : '通知密钥'" />
-        <v-textarea v-model="settings.notification_template" label="通知模板" rows="5" placeholder="留空使用原工具默认模板" />
+        <h3 class="mt-5 mb-3">什么时候通知</h3>
+        <v-select v-model="settings.notification_mode" :disabled="!settings.notification_enabled" label="通知方案" :items="[{ title: '仅异常（推荐）', value: 'attention' }, { title: '完成与异常', value: 'result' }, { title: '自定义', value: 'custom' }]" />
+        <p v-if="settings.notification_mode !== 'custom'" class="muted mb-4">{{ settings.notification_mode === 'attention' ? '最终失败或需要你处理时通知，自动重试不通知。' : '整条处理链完成、最终失败或需要你处理时通知，中间步骤不重复报成功。' }}</p>
+        <NotificationStages v-else v-model="settings.notification_events" :catalog="settings.notification_catalog || []" :disabled="!settings.notification_enabled" />
+        <v-expansion-panels variant="accordion" class="mt-4"><v-expansion-panel title="消息样式"><v-expansion-panel-text>
+          <v-textarea v-model="settings.notification_template" label="通知模板" rows="5" placeholder="留空使用默认模板" />
+          <v-btn variant="text" @click="settings.notification_template = ''">恢复默认</v-btn>
+          <p class="muted mt-3">示例：处理完成 · 示例资源 · 下载、清理及已启用的后续处理完成。示例不会实际发送。</p>
+        </v-expansion-panel-text></v-expansion-panel></v-expansion-panels>
         <v-btn variant="text" class="mt-3" @click="action('/api/notification', { api_key: '' }, '通知密钥已清除')"><Trash2 :size="16" class="mr-2" />清除密钥</v-btn>
-        <v-btn variant="text" class="mt-3" @click="action('/api/notification/test')"><Send :size="16" class="mr-2" />测试通知</v-btn>
+        <v-btn variant="text" class="mt-3" @click="testNotification"><Send :size="16" class="mr-2" />保存并测试连接</v-btn>
+        <p class="muted mt-2">测试会先保存当前设置，再发送测试消息，不受业务阶段开关限制。</p>
       </section>
       <div v-if="['cloud', 'scheduler', 'downloads', 'notifications', 'status'].includes(settingsSection)" class="save-row"><v-btn color="primary" :disabled="loading || savingSettings" :loading="savingSettings" @click="saveSettings"><Save :size="17" class="mr-2" />{{ savingSettings ? '保存中' : '保存设置' }}</v-btn><p v-if="saveFeedback" :class="saveSucceeded ? 'success-text' : 'error-text'" role="status">{{ saveFeedback }}</p></div>
       <section v-if="settingsSection === 'passwords'" class="settings-section"><h2>压缩包密码 <span class="muted">({{ settings.password_count || 0 }})</span></h2><div class="form-grid"><v-text-field v-model="newPassword" label="新增密码" type="password" autocomplete="off" /><v-btn variant="outlined" :disabled="!newPassword" @click="action('/api/passwords', { action: 'add', password: newPassword }).then(() => newPassword = '')"><Plus :size="16" class="mr-2" />添加</v-btn></div><div class="password-list"><div v-for="index in (settings.password_count || 0)" :key="index"><span>密码 {{ index }} · ********</span><button :aria-label="'移除密码' + index" title="移除密码" @click="action('/api/passwords', { action: 'remove', index: index - 1 })"><Trash2 :size="16" /></button></div></div></section>
