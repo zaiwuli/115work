@@ -106,6 +106,8 @@ class OfflineService:
                 item = session.get(Offline, identifier)
                 if not item or not item.target_cid or item.status in {"failed", "submit_failed", "canceled"}:
                     continue
+                if session.get(Settings, "seed-policy:" + identifier) or item.stage in {"complete", "discover_review"}:
+                    continue
                 if session.scalar(select(ResourceLink.id).where(ResourceLink.offline_id == identifier)):
                     continue
                 grouped.setdefault(item.target_cid, []).append(identifier)

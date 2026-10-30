@@ -178,6 +178,25 @@ class ArchiveService:
 
     async def scan(self, job):
         cid = job.payload["cid"]
+        if job.payload.get("offline_only"):
+            from app.persistence.models import Offline, ResourceLink
+            with self.db.session() as session:
+                query = select(Offline).where(
+                    Offline.target_cid == cid,
+                    Offline.status.in_(["submitted", "downloading", "unknown", "submission_unknown", "success"]),
+                    Offline.stage.not_in(["complete", "discover_review"]),
+                    ~select(ResourceLink.id).where(ResourceLink.offline_id == Offline.id).exists(),
+                )
+                if job.payload.get("offline_ids") is not None:
+                    query = query.where(Offline.id.in_(job.payload["offline_ids"]))
+                pending = [item for item in session.scalars(query)
+                           if not session.get(Settings, "seed-policy:" + item.id)]
+                if not pending:
+                    current = self.store.owned(session, job)
+                    current.payload = current.payload | {"walk": [], "candidates": [], "offset": 0}
+                    record(session, job.id, "SCAN_OBSOLETE", "cloud_scan",
+                           f"目标 CID {cid}：无待关联离线任务，已结束历史补扫")
+                    return None
         settings = self.db.settings()
         if cid in {settings.get(key) for key in (
             "cloud_output_cid", "cloud_archive_cid", "cloud_failed_cid",
@@ -187,7 +206,7 @@ class ArchiveService:
         offset = int(job.payload.get("offset", 0))
         collected = []
         next_offset = None
-        walking = job.payload.get("walk", [])
+        walking = list(job.payload.get("walk", []))
         for _ in range(0 if walking else 5):
             page = await self.adapter.files(cid, offset)
             collected.extend(page.files)
@@ -210,13 +229,15 @@ class ArchiveService:
         elif next_offset is None:
             from app.persistence.models import Offline
             with self.db.session() as session:
-                magnet_names = {match_name(x.name) for x in session.scalars(select(Offline).where(
-                    Offline.target_cid == cid, Offline.kind == "magnet",
-                ))}
+                names_query = select(Offline).where(Offline.target_cid == cid, Offline.kind == "magnet")
+                if job.payload.get("offline_only"):
+                    names_query = names_query.where(Offline.id.in_([item.id for item in pending]))
+                magnet_names = {match_name(x.name) for x in session.scalars(names_query)}
             directories = collected + [CloudFile(**x) for x in job.payload.get("candidates", [])]
             walking = [{"cid": f.fid} for f in directories if f.is_dir and match_name(f.name) in magnet_names]
         with self.db.session() as session:
             current_job = self.store.owned(session, job)
+            current_job.payload = current_job.payload | {"scan_validation_failures": 0}
             candidate_rows = current_job.payload.get("candidates", []) + [asdict(x) for x in collected]
             candidates = list({(x["fid"], x["cid"]): x for x in candidate_rows}.values())
             # Keep only bounded matching evidence; scans never assert source deletion.

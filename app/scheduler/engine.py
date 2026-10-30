@@ -174,8 +174,18 @@ class Engine:
                     return
                 current.error = code[:100]
                 record(session, job.id, "JOB_FAILED", job.kind,
-                       f"调度任务失败；错误代码 {code[:100]}；异常类型 {type(exc).__name__}")
-                if job.kind == "local_extract":
+                       f"调度任务失败；错误代码 {code[:100]}；异常类型 {type(exc).__name__}" +
+                       (f"；目标 CID {job.payload.get('cid', '')}；失败 CID {exc.step or job.payload.get('cid', '')}"
+                        if job.kind == "cloud_scan" and isinstance(exc, AdapterError) else ""))
+                if job.kind == "cloud_scan" and code in {"CID_NOT_VERIFIED", "DISCOVERY_BUDGET_REQUIRES_REVIEW"}:
+                    failures = current.payload.get("scan_validation_failures", 0) + 1
+                    current.payload = current.payload | {"scan_validation_failures": failures}
+                    current.state = "FAILED" if failures >= 3 else "READY"
+                    current.due = time.time() + 300
+                    if failures >= 3:
+                        record(session, job.id, "SCAN_REQUIRES_REVIEW", "cloud_scan",
+                               f"目标 CID {job.payload.get('cid', '')}：连续目录校验失败，已停止自动重试，请核对目录后手动刷新")
+                elif job.kind == "local_extract":
                     task = session.get(Task, job.payload["task_id"])
                     if task.cancel_requested:
                         if task.state not in {"SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"}:

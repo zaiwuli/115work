@@ -132,7 +132,7 @@ class P115Adapter:
         if cid != "0" and (
             not path or str(path[-1].get("cid", path[-1].get("file_id", ""))) != cid
         ):
-            raise AdapterError("CID_NOT_VERIFIED")
+            raise AdapterError("CID_NOT_VERIFIED", step=cid)
         files = [
             CloudFile(
                 str(item.get("fid") or item.get("cid")),
@@ -155,7 +155,7 @@ class P115Adapter:
         path = [str(item.get("cid", item.get("file_id", "")))
                 for item in response.get("path", [])]
         if cid != "0" and (not path or path[-1] != cid):
-            raise AdapterError("CID_NOT_VERIFIED")
+            raise AdapterError("CID_NOT_VERIFIED", step=cid)
         return path or ["0"]
 
     async def folder(self, parent: str, name: str) -> str:

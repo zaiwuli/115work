@@ -11,6 +11,8 @@ def enqueue(session, key: str, kind: str, payload: dict, due: float | None = Non
     if existing:
         if kind == "cloud_scan":
             merged = existing.payload | payload
+            if existing.state == "FAILED":
+                merged.update({"scan_validation_failures": 0, "walk": [], "candidates": [], "offset": 0})
             if "offline_ids" in existing.payload and "offline_ids" in payload:
                 merged["offline_ids"] = list(dict.fromkeys(existing.payload["offline_ids"] + payload["offline_ids"]))
             else:
