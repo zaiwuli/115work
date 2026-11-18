@@ -53,6 +53,11 @@ def create_app(config: Config | None = None, adapter=None) -> FastAPI:
                 with sqlite3.connect(config.db_path) as source:
                     with sqlite3.connect(backups / f"startup-{time.time_ns()}.db") as target:
                         source.backup(target)
+                for old_backup in sorted(backups.glob("startup-*.db"), reverse=True)[5:]:
+                    try:
+                        old_backup.unlink()
+                    except OSError:
+                        logging.getLogger("115work").warning("Could not rotate startup backup: %s", old_backup.name)
             db = Database(config.db_path)
             migrate(db)
             key_path = config.data_dir / "config/master.key"

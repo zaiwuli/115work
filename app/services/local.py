@@ -34,13 +34,11 @@ class LocalService:
         self.transfer = None
 
     @staticmethod
-    def bounded_files(root, limit=10000, offset=0, excludes=()):
+    def iter_files(root, excludes=()):
         def excluded(path):
             return any(path.is_relative_to(prefix) for prefix in excludes)
         if excluded(root):
-            return [], 0
-        found = []
-        seen = 0
+            return
         for parent, directories, names in os.walk(root, followlinks=False):
             directories[:] = [name for name in directories if not name.startswith(".") and
                               not (Path(parent) / name).is_symlink() and
@@ -48,13 +46,13 @@ class LocalService:
             for name in names:
                 path = Path(parent) / name
                 if not path.is_symlink() and not excluded(path):
-                    seen += 1
-                    if seen <= offset:
-                        continue
-                    found.append(path)
-                if len(found) >= limit:
-                    return found, offset + len(found)
-        return found, 0
+                    yield path
+
+    @classmethod
+    def bounded_files(cls, root, limit=10000, offset=0, excludes=()):
+        from itertools import islice
+        found = list(islice(cls.iter_files(root, excludes), offset, offset + limit))
+        return found, offset + len(found) if len(found) == limit else 0
 
     def stable(self, session, path: Path) -> bool:
         info = path.stat()
@@ -81,7 +79,18 @@ class LocalService:
             excludes += tuple(self.config.local_path(x) for x in (
                 "inbox/processed", "inbox/partial", "inbox/failed",
             ))
-        files, cursor = await asyncio.to_thread(self.bounded_files, root, 10000, source.cursor, excludes)
+        from itertools import islice
+        scan_key = (root, excludes)
+        if not hasattr(self, "scan_iterators"):
+            self.scan_iterators = {}
+        saved_key, iterator = self.scan_iterators.pop(source.id, (None, None))
+        if saved_key != scan_key or not source.cursor:
+            iterator = self.iter_files(root, excludes)
+            offset = 0
+        else:
+            offset = source.cursor
+        files = await asyncio.to_thread(lambda: list(islice(iterator, 10000)))
+        cursor = offset + len(files) if len(files) == 10000 else 0
         with self.db.session() as session:
             self.store.owned(session, job)
             session.get(Source, source.id).cursor = cursor
@@ -186,6 +195,8 @@ class LocalService:
             record(session, source.id, "LOCAL_SCAN_COMPLETED", "local_scan",
                    f"目录 {root}；扫描 {len(files)} 个文件；稳定压缩包 {len(archives)} 个；"
                    f"耗时 {time.monotonic() - started:.2f} 秒")
+        if cursor:
+            self.scan_iterators[source.id] = (scan_key, iterator)
         return time.time() + 5 if cursor else None
 
     async def document(self, job):

@@ -40,7 +40,7 @@ class CloudMonitor:
         self.db, self.adapter = db, adapter
 
     def schedule(self, session, now):
-        settings = self.db.settings()
+        settings = self.db.settings("life_monitor_enabled")
         if not settings["life_monitor_enabled"]:
             return
         saved = session.get(Settings, "life-monitor-state")

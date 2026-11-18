@@ -230,6 +230,14 @@ class OfflineService:
             else:
                 statuses = await self.adapter.offline_snapshot()
                 self.snapshot = (now, statuses)
+            by_hash, by_link, by_name = {}, {}, {}
+            for index, remote in enumerate(statuses):
+                if remote.hash_value:
+                    by_hash.setdefault(remote.hash_value, set()).add(index)
+                by_link.setdefault(remote.link, set()).add(index)
+                if remote.name:
+                    by_name.setdefault(match_name(remote.name), set()).add(index)
+            fallback_seconds = self.db.settings("offline_fallback_seconds")["offline_fallback_seconds"]
             with self.db.session() as session:
                 if job:
                     self.job_store.owned(session, job)
@@ -237,15 +245,10 @@ class OfflineService:
                     current = session.get(Offline, item.id)
                     if current is None or current.status not in POLLABLE:
                         continue
-                    matches = [
-                        remote for remote in statuses
-                        if (current.hash_value and current.hash_value == remote.hash_value)
-                        or current.original_link == remote.link
-                    ]
+                    matches = by_hash.get(current.hash_value, set()) | by_link.get(current.original_link, set())
                     if not matches:
-                        matches = [remote for remote in statuses
-                                   if remote.name and match_name(remote.name) == match_name(current.name)]
-                    status = matches[0].status if len(matches) == 1 else "unknown"
+                        matches = by_name.get(match_name(current.name), set())
+                    status = statuses[next(iter(matches))].status if len(matches) == 1 else "unknown"
                     if status != current.status:
                         current.status, current.updated_at = status, now
                         current.error = "REMOTE_OFFLINE_FAILED" if status == "failed" else ""
@@ -257,7 +260,7 @@ class OfflineService:
                     if execution:
                         execution.status, execution.error = current.status, current.error
                     interval = {1: 180, 2: 300}.get(
-                        current.check_count, self.db.settings()["offline_fallback_seconds"]
+                        current.check_count, fallback_seconds
                     )
                     started = execution.created_at if execution else current.created_at
                     expired = now >= started + POLL_DEADLINE_SECONDS
@@ -392,12 +395,15 @@ class OfflineService:
                 record(session, item.id, "MANUAL_RETRY", "offline_submit", "Retry authorized")
         return len(tasks)
 
-    def recover(self, session):
-        for item in session.scalars(select(Offline).where(Offline.status == "submitting")):
+    def recover(self, session, batch_id=None):
+        query = select(Offline)
+        if batch_id is not None:
+            query = query.where(Offline.batch_id == batch_id)
+        for item in session.scalars(query.where(Offline.status == "submitting")):
             item.status, item.next_check = "submission_unknown", time.time()
             operation = session.get(Operation, f"offline:{item.id}:{item.generation}")
             if operation:
                 operation.status = "UNKNOWN"
-        for item in session.scalars(select(Offline).where(Offline.status == "queued")):
+        for item in session.scalars(query.where(Offline.status == "queued")):
             enqueue(session, "offline-submit:" + item.batch_id, "offline_submit",
                     {"batch_id": item.batch_id})

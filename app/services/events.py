@@ -51,8 +51,9 @@ def record(session, task_id: str, kind: str, stage: str, message: str, category:
             status = "pending"
             if options is not None or mode is not None:
                 from app.services.notifications import enabled as notification_enabled
-                values = {row.key: row.value["value"] for row in session.scalars(select(Settings))
-                          if row.key.startswith("notification_") and "value" in row.value}
+                values = {row.key: row.value["value"] for row in session.scalars(
+                    select(Settings).where(Settings.key.startswith("notification_", autoescape=True)),
+                ) if "value" in row.value}
                 if not notification_enabled(values, event, category):
                     status = "suppressed"
             session.add(Outbox(event_id=event.id, category=category, status=status))

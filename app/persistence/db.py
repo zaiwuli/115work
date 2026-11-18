@@ -70,11 +70,16 @@ class Database:
             with session.begin():
                 yield session
 
-    def settings(self) -> dict:
+    def settings(self, *keys: str) -> dict:
+        query = select(Settings)
+        defaults = DEFAULT_SETTINGS
+        if keys:
+            query = query.where(Settings.key.in_(keys))
+            defaults = {key: DEFAULT_SETTINGS[key] for key in keys if key in DEFAULT_SETTINGS}
         with self.session() as session:
-            saved = {x.key: x.value["value"] for x in session.scalars(select(Settings))
+            saved = {x.key: x.value["value"] for x in session.scalars(query)
                      if "value" in x.value}
-        return DEFAULT_SETTINGS | saved
+        return defaults | saved
 
     def set_settings(self, values: dict) -> None:
         with self.session() as session:

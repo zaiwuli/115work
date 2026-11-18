@@ -1,5 +1,7 @@
 from pathlib import PurePosixPath
 
+from sqlalchemy import select
+
 from app.persistence.models import Offline, Settings, Operation
 from app.services.cloud_flatten import listing
 from app.services.events import record
@@ -89,6 +91,23 @@ class SeedCleanup:
             selected = [(f, p) for f, p in files if policy["enabled"] and should_remove(p, f.size, policy)]
             with self.db.session() as session:
                 self.store.owned(session, job)
+                pending = list(session.scalars(select(Operation).where(
+                    Operation.task_id == identifier, Operation.kind == "seed_cleanup",
+                    Operation.status != "COMPLETED",
+                )))
+                if pending:
+                    current = {file.fid: (file, path) for file, path in files + directories}
+                    for operation in pending:
+                        evidence = operation.evidence
+                        match = current.get(evidence["fid"])
+                        if match is None:
+                            raise ValueError("SEED_DELETE_NOT_FOUND_REQUIRES_REVIEW")
+                        file, path = match
+                        if any(evidence[field] != value for field, value in (
+                            ("cid", file.cid), ("path", path), ("size", file.size), ("sha1", file.sha1),
+                        ) if field in evidence):
+                            raise ValueError("SEED_DELETE_IDENTITY_CHANGED")
+                    raise ValueError("SEED_DELETE_STILL_PRESENT_REQUIRES_REVIEW")
                 saved = session.get(Settings, "seed-policy:" + identifier)
                 saved.value = saved.value | {"matched": len(selected), "preview": [p for _, p in selected], "root_cid": root.fid}
             for file, path in selected if not policy["dry_run"] else []:
@@ -146,7 +165,8 @@ class SeedCleanup:
                     return
                 raise ValueError("SEED_DELETE_REQUIRES_RECONCILIATION")
             session.add(Operation(key=key, task_id=identifier, kind="seed_cleanup",
-                                  evidence={"fid": file.fid, "cid": file.cid, "path": path}))
+                                  evidence={"fid": file.fid, "cid": file.cid, "path": path,
+                                            "size": file.size, "sha1": file.sha1}))
         if directory and await listing(self.adapter, file.fid):
             raise ValueError("SEED_DIRECTORY_NOT_EMPTY")
         await self.adapter.delete_verified({"fid": file.fid, "cid": file.cid,

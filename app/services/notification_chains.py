@@ -5,6 +5,13 @@ from app.persistence.models import Event, Offline, ResourceLink, Settings, Task
 from app.services.events import record
 
 
+OUTCOME_EVENTS = (
+    "SUCCESS", "SUCCEEDED", "FAILED", "SUBMIT_FAILED", "SEED_CLEANUP_COMPLETED",
+    "SEED_CLEANUP_FAILED", "POSTPROCESS_SUCCEEDED", "POSTPROCESS_FAILED",
+    "OUTPUT_CLEANUP_FAILED", "OUTPUT_FLATTEN_FAILED",
+)
+
+
 def outcome(task):
     if task.state in {"CANCELED", "SKIPPED"}:
         return "canceled"
@@ -26,10 +33,17 @@ def collect(session, settings):
     if settings.get("notification_mode", "custom") == "custom":
         return
     since = settings.get("notification_mode_since", 0)
-    tasks = {t.id: t for t in session.scalars(select(Task))}
+    recent_ids = select(Event.task_id).where(Event.created_at >= since, Event.kind.in_(OUTCOME_EVENTS))
+    parent_ids = select(ResourceLink.offline_id).where(ResourceLink.task_id.in_(recent_ids))
+    active_parents = recent_ids.union(parent_ids)
+    child_ids = select(ResourceLink.task_id).where(ResourceLink.offline_id.in_(active_parents))
+    tasks = {t.id: t for t in session.scalars(select(Task).where(
+        Task.id.in_(recent_ids) | Task.id.in_(child_ids),
+    ))}
     parents = {}
-    for link in session.scalars(select(ResourceLink)):
-        parents.setdefault(link.offline_id, []).append(tasks[link.task_id])
+    for link in session.scalars(select(ResourceLink).where(ResourceLink.offline_id.in_(active_parents))):
+        if link.task_id in tasks:
+            parents.setdefault(link.offline_id, []).append(tasks[link.task_id])
     linked = {t.id for children in parents.values() for t in children}
 
     def publish(identifier, category, states, message, cutoff=0):
@@ -42,10 +56,7 @@ def collect(session, settings):
         recent = session.scalar(select(Event.id).where(
             Event.task_id.in_([identifier] + [t.id for t in parents.get(identifier, [])]),
             Event.created_at >= since, Event.id > cutoff,
-            Event.kind.not_like("CHAIN_%"),
-            Event.kind.in_(["SUCCESS", "SUCCEEDED", "FAILED", "SUBMIT_FAILED", "SEED_CLEANUP_COMPLETED",
-                           "SEED_CLEANUP_FAILED", "POSTPROCESS_SUCCEEDED", "POSTPROCESS_FAILED",
-                           "OUTPUT_CLEANUP_FAILED", "OUTPUT_FLATTEN_FAILED"]),
+            Event.kind.in_(OUTCOME_EVENTS),
         ).limit(1))
         if not recent:
             return
@@ -60,7 +71,7 @@ def collect(session, settings):
             return
         record(session, identifier, kind, "complete", message, category)
 
-    for item in session.scalars(select(Offline)):
+    for item in session.scalars(select(Offline).where(Offline.id.in_(active_parents))):
         seed = session.get(Settings, "seed-policy:" + item.id)
         children = parents.get(item.id, [])
         child_states = [outcome(t) for t in children]

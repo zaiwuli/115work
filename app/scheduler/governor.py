@@ -24,4 +24,6 @@ class RemoteGovernor:
 
     def success(self):
         with self.db.session() as session:
-            session.merge(Settings(key=self.key, value={"count": 0, "until": 0, "error": ""}))
+            state = session.get(Settings, self.key)
+            if state is not None:
+                state.value = {"count": 0, "until": 0, "error": ""}

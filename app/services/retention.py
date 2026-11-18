@@ -234,12 +234,11 @@ class RetentionService:
 
     def cache_preview(self):
         with self.db.session() as session:
-            entries = list(session.scalars(select(CacheEntry)))
-            tasks = {task.id: task for task in session.scalars(select(Task))}
+            entries = session.execute(select(CacheEntry, Task.state).join(Task, Task.id == CacheEntry.task_id)).all()
         return [{"task_id": entry.task_id, "size": entry.size, "path": entry.path,
-                 "eligible": tasks[entry.task_id].state in {"SUCCEEDED", "CANCELED", "SKIPPED"},
-                 "reason": "" if tasks[entry.task_id].state in {"SUCCEEDED", "CANCELED", "SKIPPED"}
-                 else "TASK_REFERENCED"} for entry in entries]
+                 "eligible": state in {"SUCCEEDED", "CANCELED", "SKIPPED"},
+                 "reason": "" if state in {"SUCCEEDED", "CANCELED", "SKIPPED"}
+                 else "TASK_REFERENCED"} for entry, state in entries]
 
     async def cleanup(self, job):
         for item in self.cache_preview():
@@ -253,7 +252,7 @@ class RetentionService:
                 self.store.owned(session, job)
                 task = session.get(Task, item["task_id"])
                 if job.payload.get("automatic"):
-                    if not self.db.settings().get("cache_auto_cleanup", True) or task.state != "SUCCEEDED":
+                    if not self.db.settings("cache_auto_cleanup")["cache_auto_cleanup"] or task.state != "SUCCEEDED":
                         continue
                     needs_postprocess = task.policy.get("cleanup_enabled") or task.policy.get("original_action", "retain") != "retain"
                     if needs_postprocess and task.output.get("postprocess_result") != "SUCCEEDED":

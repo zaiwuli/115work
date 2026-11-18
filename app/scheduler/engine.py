@@ -43,6 +43,8 @@ class Engine:
         self.runner = None
         self.running_jobs = {}
         self.watchers = {}
+        self.watcher_paths = {}
+        self.watcher_retry_at = {}
         self.next_cache_cleanup = 0
         self.retention = RetentionService(db, config, self.store, adapter)
         self.local.transfer = TransferService(db, config, self.store, adapter)
@@ -79,8 +81,10 @@ class Engine:
             for source in session.scalars(select(Source).where(Source.enabled)):
                 source.next_run = time.time()
 
-    def plan(self):
-        if self.db.settings()["paused"]:
+    def plan(self, settings=None):
+        if settings is None:
+            settings = self.db.settings("paused", "cloud_extract_timeout_seconds", "cache_auto_cleanup")
+        if settings["paused"]:
             return
         now = time.time()
         with self.db.session() as session:
@@ -90,7 +94,7 @@ class Engine:
                 "SUCCEEDED", "FAILED", "CANCELED", "SKIPPED", "WAITING_APPROVAL",
             }:
                 started = task.policy.get("cloud_started_at", task.updated_at)
-                if now - started >= self.db.settings()["cloud_extract_timeout_seconds"]:
+                if now - started >= settings["cloud_extract_timeout_seconds"]:
                     jobs = list(session.scalars(select(Job).where(
                         Job.payload["task_id"].as_string() == task.id,
                         Job.kind == "cloud_extract",
@@ -102,7 +106,7 @@ class Engine:
                         for job in jobs:
                             if job.state in {"READY", "RECONCILING"}:
                                 job.state, job.dirty = "SUCCEEDED", False
-            if now >= self.next_cache_cleanup and self.db.settings().get("cache_auto_cleanup", True):
+            if now >= self.next_cache_cleanup and settings["cache_auto_cleanup"]:
                 enqueue(session, "automatic-cache-cleanup", "cache_gc", {"automatic": True})
                 self.next_cache_cleanup = now + 60
             self.offline.schedule_poll(session, now)
@@ -315,10 +319,13 @@ class Engine:
 
     async def run(self):
         while not self.stopping.is_set():
-            self.plan()
+            self.recover_expired()
+            settings = self.db.settings("paused", "cloud_extract_timeout_seconds", "cache_auto_cleanup",
+                                        "local_extract_concurrency")
+            self.plan(settings)
             self.start_watchers()
             # Pausing blocks new workflows but permits remote-operation observation.
-            paused = self.db.settings()["paused"]
+            paused = settings["paused"]
             all_kinds = [
                 "offline_submit", "offline_poll", "cloud_scan", "cloud_extract",
                 "local_scan", "local_extract", "document", "notifications",
@@ -338,7 +345,7 @@ class Engine:
                     kinds.append("cloud_extract")
             busy = {j.kind for j, _ in self.running_jobs.values()}
             local_count = sum(j.kind == "local_extract" for j, _ in self.running_jobs.values())
-            local_limit = self.db.settings().get("local_extract_concurrency", 1)
+            local_limit = settings["local_extract_concurrency"]
             kinds = [kind for kind in kinds if
                      (local_count < local_limit if kind == "local_extract" else kind not in busy)]
             if len(self.running_jobs) >= 3 + local_limit:
@@ -360,21 +367,50 @@ class Engine:
             except TimeoutError:
                 pass
 
+    def recover_expired(self):
+        now = time.time()
+        with self.db.session() as session:
+            for job in session.scalars(select(Job).where(
+                Job.state == "RUNNING", Job.lease_until <= now,
+            )):
+                if job.id in self.running_jobs:
+                    continue
+                job.state, job.due = "READY", now
+                job.owner, job.lease_until = "", None
+                if job.kind == "offline_submit":
+                    self.offline.recover(session, job.payload["batch_id"])
+
     def start(self):
         self.initialize()
         if self.config.scheduler_enabled:
             self.runner = asyncio.create_task(self.run(), name="115work-scheduler")
 
     def start_watchers(self):
-        if not self.config.watcher_enabled:
-            return
-        with self.db.session() as session:
-            sources = list(session.scalars(select(Source).where(
-                Source.enabled, Source.kind.in_(["local", "inbox"]),
-            )))
-        for source in sources:
-            if source.id not in self.watchers:
-                self.watchers[source.id] = asyncio.create_task(self.watch(source.id, source.config["path"]))
+        desired = {}
+        if self.config.watcher_enabled:
+            with self.db.session() as session:
+                desired = {source.id: source.config["path"] for source in session.scalars(select(Source).where(
+                    Source.enabled, Source.kind.in_(["local", "inbox"]),
+                ))}
+        now = time.monotonic()
+        for source_id, watcher in list(self.watchers.items()):
+            if desired.get(source_id) != self.watcher_paths[source_id]:
+                watcher.cancel()
+                if not watcher.done():
+                    continue
+                self.watcher_retry_at.pop(source_id, None)
+            elif not watcher.done():
+                continue
+            else:
+                self.watcher_retry_at[source_id] = now + 30
+            del self.watchers[source_id], self.watcher_paths[source_id]
+        for source_id in self.watcher_retry_at.keys() - desired.keys():
+            del self.watcher_retry_at[source_id]
+        for source_id, path in desired.items():
+            if source_id not in self.watchers and now >= self.watcher_retry_at.get(source_id, 0):
+                self.watcher_retry_at.pop(source_id, None)
+                self.watcher_paths[source_id] = path
+                self.watchers[source_id] = asyncio.create_task(self.watch(source_id, path))
 
     async def watch(self, source_id, path):
         from watchfiles import awatch
@@ -382,7 +418,7 @@ class Engine:
             async for _ in awatch(path, debounce=2000, step=500):
                 with self.db.session() as session:
                     source = session.get(Source, source_id)
-                    if source and source.enabled:
+                    if source and source.enabled and source.config.get("path") == path:
                         enqueue(session, "scan-source:" + source_id, "local_scan", {"source_id": source_id})
                 self.wake.set()
         except asyncio.CancelledError:

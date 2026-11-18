@@ -111,7 +111,8 @@ class TransferService:
             if saved["version"] != version or await asyncio.to_thread(digest, target) != saved["sha256"]:
                 raise ValueError("CACHE_VERSION_OR_HASH_MISMATCH")
             return target
-        if self.db.settings().get("downloads_paused") or self.db.settings()["paused"]:
+        settings = self.db.settings("downloads_paused", "paused")
+        if settings.get("downloads_paused") or settings["paused"]:
             return None
         if task.source == "115":
             route = await self.adapter.download(task.locator["pickcode"])
@@ -170,9 +171,14 @@ class TransferService:
                     raise ValueError("DOWNLOAD_REQUEST_REJECTED")
                 response.raise_for_status()
                 with part.open("ab") as writer:
+                    next_pause_check = 0.0
                     async for chunk in response.aiter_bytes(1024 * 1024):
-                        if self.db.settings().get("downloads_paused") or self.db.settings()["paused"]:
-                            return None
+                        now = time.monotonic()
+                        if now >= next_pause_check:
+                            settings = self.db.settings("downloads_paused", "paused")
+                            if settings.get("downloads_paused") or settings["paused"]:
+                                return None
+                            next_pause_check = now + 1
                         with self.db.session() as session:
                             self.store.owned(session, job)
                             if session.get(Task, task.id).cancel_requested:
